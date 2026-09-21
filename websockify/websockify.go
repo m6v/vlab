@@ -10,7 +10,6 @@ import (
 	"strings"
 	"io"
 	"time"
-
 	"golang.org/x/net/websocket"
 )
 
@@ -20,6 +19,7 @@ var (
 )
 
 func init() {
+    // Дефолтные значение параметров
 	sourceAddr = flag.String("l", "127.0.0.1:8085", "http service address")
 	tokenFile = flag.String("f", "/tmp/tokens.txt", "path to flat tokens file")
 }
