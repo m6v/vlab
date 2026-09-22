@@ -30,8 +30,8 @@ deb:
 	@mkdir -p $(BUILD_PATH)$(TARGET_PATH)
 	@cp -a index.html server.py tokens.json virt-manager.png websockify $(BUILD_PATH)$(TARGET_PATH)
 
-	@mkdir -p $(BUILD_PATH)$(TARGET_PATH)/noNVC-1.6.0
-	@cp -r noVNC-1.6.0/. $(BUILD_PATH)$(TARGET_PATH)/noNVC-1.6.0
+	@mkdir -p $(BUILD_PATH)$(TARGET_PATH)/noVNC-1.6.0
+	@cp -r noVNC-1.6.0/. $(BUILD_PATH)$(TARGET_PATH)/noVNC-1.6.0
 
 	@mkdir -p $(BUILD_PATH)$(SYSTEMD_PATH)
 	@cp $(UNIT_NAME).service $(BUILD_PATH)$(SYSTEMD_PATH)

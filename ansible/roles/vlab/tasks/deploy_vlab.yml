@@ -78,8 +78,27 @@
 - name: Копирование иконок в системный каталог
   synchronize:
     # Слэш на конце src задает копирование содержимого каталога, а не самого каталога
-    src: files/icons/
+    src: "{{ role_path }}/files/icons/"
     dest: "/usr/share/pixmaps/"
     recursive: yes
     delete: no
     archive: yes
+
+- name: Копирование deb-пакетов с доп. программами на АРМ Инструктора
+  synchronize:
+    # Слэш на конце src задает копирование содержимого каталога, а не самого каталога
+    src: "{{ role_path }}/files/packages/"
+    dest: "/tmp/packages/"
+    recursive: yes
+    delete: no
+    archive: yes
+  when: inventory_hostname == 'iws'
+
+- name: Установка deb-пакетов с доп. программами на АРМ Инструктора
+  apt:
+    deb: "{{ item }}"
+  # fileglob ищет файлы на АРМ Инструктора
+  with_fileglob:
+    - "/tmp/packages/*.deb"
+  become: true
+  when: inventory_hostname == 'iws'
