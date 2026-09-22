@@ -1,0 +1,8 @@
+Package: vlab-panel2
+Version: 0.2
+Section: utils
+Priority: optional
+Architecture: amd64
+Depends: novnc
+Maintainer: Sergey Maksimov <m6v@mail.ru>
+Description: Instructor's web-panel version 2

@@ -1,0 +1,18 @@
+#!/bin/sh
+set -e
+
+# Проверяем, что скрипт вызван именно во время настройки пакета
+if [ "$1" = "configure" ]; then
+    echo "Настройка службы vlab-panel2..."
+    
+    # Перезагружаем конфигурацию systemd, чтобы она увидела новый файл службы
+    systemctl daemon-reload
+
+    # Включаем автозапуск службы при загрузке системы
+    systemctl enable vlab-panel2.service
+
+    # Перезапускаем или запускаем службу
+    systemctl restart vlab-panel2.service
+fi
+
+exit 0

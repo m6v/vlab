@@ -1,0 +1,22 @@
+[Unit]
+Description=Instructor's Web Panel version 2
+After=network.target libvirtd.service
+Requires=libvirtd.service
+
+[Service]
+Type=simple
+
+WorkingDirectory=/opt/vlab/panel2/noVNC-1.6.0
+ExecStart=/opt/vlab/panel2/server.py
+
+User=root
+Group=root
+
+Restart=on-failure
+RestartSec=5s
+
+KillMode=control-group
+TimeoutStopSec=10s
+
+[Install]
+WantedBy=multi-user.target
