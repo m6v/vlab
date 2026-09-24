@@ -7,7 +7,7 @@ FAKETIME_FILE = /etc/faketime
 INITIAL_DATE = 2026-01-15 03:00:00
 
 
-.PHONY: all install clean restart stop enter status arch
+.PHONY: all install clean restart stop enter status arch deb
 
 all: install restart
 
@@ -67,7 +67,7 @@ clean:
 	@systemctl daemon-reload
 	@echo "Очистка завершена."
 
-deb: stop
+deb:
 	@echo "Чтение шаблона deb-пакета..."
 	$(eval PKG_NAME := $(shell awk '/^Package:/ {print $$2}' control))
 	$(eval BASE_VER  := $(shell awk '/^Version:/ {print $$2}' control))
@@ -83,8 +83,8 @@ deb: stop
 	@cp control $(TMP_BUILD_DIR)/DEBIAN/control
 
 	@cp postinst $(TMP_BUILD_DIR)/DEBIAN/postinst
-	@cp prerm $(TMP_BUILD_DIR)/DEBIAN/prerm
 	@chmod 755 $(TMP_BUILD_DIR)/DEBIAN/postinst
+	@cp prerm $(TMP_BUILD_DIR)/DEBIAN/prerm
 	@chmod 755 $(TMP_BUILD_DIR)/DEBIAN/prerm
 
 	@mkdir -p $(TMP_BUILD_DIR)$(STORAGE_DIR)
@@ -96,6 +96,6 @@ deb: stop
 	@cp $(UNIT_NAME).service $(TMP_BUILD_DIR)$(SYSTEMD_DIR)/
 
 	@echo "Сборка deb-пакета..."
-	@sudo dpkg-deb --build git $(PKG_NAME)_$(PKG_VER)_$(PKG_ARCH).deb
+	@sudo dpkg-deb --build $(TMP_BUILD_DIR) $(PKG_NAME)_$(PKG_VER)_$(PKG_ARCH).deb
 	@rm -rf $(TMP_BUILD_DIR)
 	@echo "Пакет успешно собран: $(PKG_NAME)_$(PKG_VER)_$(PKG_ARCH).deb"

@@ -22,3 +22,19 @@ machinectl() {
 EOF
 
 fi
+
+# Проверка, что скрипт вызван во время настройки пакета
+if [ "$1" = "configure" ]; then
+    echo "Настройка службы vlab-servers..."
+    
+    # Перезагружаем конфигурацию systemd, чтобы она увидела новый файл службы
+    systemctl daemon-reload
+
+    # Включаем автозапуск службы при загрузке системы
+    systemctl enable vlab-servers.service
+
+    # Перезапускаем или запускаем службу
+    systemctl restart vlab-servers.service
+fi
+
+exit 0

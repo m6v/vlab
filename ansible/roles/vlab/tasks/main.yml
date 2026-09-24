@@ -1,4 +1,12 @@
 ---
+
+# Список монтируемых ISO для Astra Linux
+iso_mounts:
+  - src: "/var/lib/libvirt/images/astra-1.7_x86-64.iso"
+    path: "/repo/alse/main"
+  - src: "/var/lib/libvirt/images/main_update-1.7.6.15-15.11.24_17.20.iso"
+    path: "/repo/alse/update-main"
+
 - name: Ветка деплоя среды виртуализации
   when: (vlab_action | default('deploy_vlab')) == 'deploy_vlab'
   environment:

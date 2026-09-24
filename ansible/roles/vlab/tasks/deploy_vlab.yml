@@ -75,7 +75,7 @@
     sg libvirt -c "virsh pool-refresh {{ system_pool_name }} 2>/dev/null || true"
   changed_when: false
 
-- name: Копирование иконок в системный каталог
+- name: Копирование пиктограмм в /usr/share/pixmaps
   synchronize:
     # Слэш на конце src задает копирование содержимого каталога, а не самого каталога
     src: "{{ role_path }}/files/icons/"
@@ -84,7 +84,7 @@
     delete: no
     archive: yes
 
-- name: Копирование deb-пакетов с доп. программами на АРМ Инструктора
+- name: Копирование deb-пакетов с доп. программами
   synchronize:
     # Слэш на конце src задает копирование содержимого каталога, а не самого каталога
     src: "{{ role_path }}/files/packages/"
@@ -92,13 +92,49 @@
     recursive: yes
     delete: no
     archive: yes
-  when: inventory_hostname == 'iws'
 
-- name: Установка deb-пакетов с доп. программами на АРМ Инструктора
+- name: Установка контейнера с сервером времени и веб-сервером
   apt:
     deb: "{{ item }}"
-  # fileglob ищет файлы на АРМ Инструктора
+  # fileglob ищет файлы на целевой машине
   with_fileglob:
-    - "/tmp/packages/*.deb"
+    - "/tmp/packages/vlab-servers*.deb"
+  become: true
+
+- name: Установка веб-панели
+  apt:
+    deb: "{{ item }}"
+  # fileglob ищет файлы на целевой машине
+  with_fileglob:
+    - "/tmp/packages/vlab-panel2*.deb"
   become: true
   when: inventory_hostname == 'iws'
+
+- name: Создание точек монтирования для ISO-репозиториев Astra Linux
+  file:
+    path: "{{ item.path }}"
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
+  loop: "{{ iso_mounts }}"
+
+- name: Настройка монтирования ISO-образов репозиториев Astra Linux
+  mount:
+    src: "{{ item.src }}"
+    path: "{{ item.path }}"
+    fstype: iso9660
+    opts: ro,loop,nofail
+    state: mounted
+  loop: "{{ iso_mounts }}"
+
+- name: Создание пустого файла образа USB-флеш накопителя (1ГБ)
+  command:
+    cmd: dd if=/dev/zero of=/var/lib/libvirt/images/usb.img bs=1M count=1024
+    creates: /var/lib/libvirt/images/usb.img
+  register: usb_image_created
+
+- name: Форматирование образа USB-флеш накопителя в FAT32
+  command:
+    cmd: mkfs.vfat -F 32 -n "KONTINENT" /var/lib/libvirt/images/usb.img
+  when: usb_image_created.changed

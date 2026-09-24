@@ -1,0 +1,10 @@
+В этом каталоге должны быть следующие файлы, которые при установке копируются в /var/lib/libvirt/images на целевых машинах:
+-rw------- 1 libvirt-qemu libvirt-qemu      196864 авг 24 09:25 arm-abi.qcow2
+-rw------- 1 libvirt-qemu libvirt-qemu 34365243392 мар  7  2026 arm-ipc.qcow2
+-rw------- 1 libvirt-qemu libvirt-qemu 34365243392 авг 10 23:46 arm-o.qcow2
+-rw------- 1 libvirt-qemu libvirt-qemu  3851223040 июн  9  2022 astra-1.7_x86-64.iso
+-rw------- 1 libvirt-qemu libvirt-qemu  2148073472 июн 16 11:40 ipc-master.qcow2
+-rw------- 1 libvirt-qemu libvirt-qemu  2148073472 июн 16 11:53 ipc-slave.qcow2
+-rw------- 1 libvirt-qemu libvirt-qemu  4396134400 июл 18  2025 main_update-1.7.6.15-15.11.24_17.20.iso
+-rw------- 1 libvirt-qemu libvirt-qemu  2162819072 июн 15 16:12 rubicon.qcow2
+-rw------- 1 libvirt-qemu libvirt-qemu      197120 авг 24 09:25 srv-szi.qcow2
