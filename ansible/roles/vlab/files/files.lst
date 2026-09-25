@@ -8,3 +8,4 @@
    - ipc-master.qcow2
    - ipc-slave.qcow2
    - arm-o.qcow2
+3. Каталог packages для deb-пакетов, предназначенных для установке на целевых машинах
