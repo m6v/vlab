@@ -110,24 +110,6 @@
   become: true
   when: inventory_hostname == 'iws'
 
-- name: Создание точек монтирования для ISO-репозиториев Astra Linux
-  file:
-    path: "{{ item.path }}"
-    state: directory
-    mode: '0755'
-    owner: root
-    group: root
-  loop: "{{ iso_mounts }}"
-
-- name: Настройка монтирования ISO-образов репозиториев Astra Linux
-  mount:
-    src: "{{ item.src }}"
-    path: "{{ item.path }}"
-    fstype: iso9660
-    opts: ro,loop,nofail
-    state: mounted
-  loop: "{{ iso_mounts }}"
-
 - name: Создание пустого файла образа USB-флеш накопителя (1ГБ)
   command:
     cmd: dd if=/dev/zero of=/var/lib/libvirt/images/usb.img bs=1M count=1024

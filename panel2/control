@@ -3,6 +3,6 @@ Version: 0.2
 Section: utils
 Priority: optional
 Architecture: amd64
-Depends: novnc
+Depends: python3
 Maintainer: Sergey Maksimov <m6v@mail.ru>
 Description: Instructor's web-panel version 2
