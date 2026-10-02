@@ -108,3 +108,97 @@ systemctl enable --now vlab-panel2
 Стало: Весь проект теперь — это одна изолированная папка (например, /opt/vlab-panel/). Скрипт, бинарник, конфигурационный JSON и папка с HTML-страницами лежат вместе. Проект можно просто скопировать и перенести на другую ЭВМ с Astra Linux, где он запустится без доролнительных настроек и прав root.
 
 Общий размер проекта 9.1 МБ
+
+# Настройка удаленных компьютеров для удаленного управления libvirt по сети
+
+NB! Описанные далее настройки проверялись, но не помогли
+```
+virsh -c qemu+tcp://192.168.1.128/session list --all
+ошибка: не удалось подключиться к гипервизору
+ошибка: доступ запрещён: доступ запрещён «QEMU»
+```
+Возможно, что единственным вариантом является подключение по `ssh`!
+
+## Изменение конфигурации демона libvirtd.conf
+Найдите, раскомментируйте и измените следующие параметры в /etc/libvirt/libvirtd.conf
+```
+listen_tls = 0          # Отключаем шифрование сертификатами
+listen_tcp = 1          # Включаем сетевой порт TCP
+tcp_port = "16509"      # Стандартный порт libvirt
+auth_tcp = "none"       # Отключаем авторизацию (пароли не требуются)
+```
+
+```bash
+cp /etc/libvirt/libvirtd.conf /etc/libvirt/libvirtd.conf.bak
+# Автоматически раскомментируем и меняем параметры с помощью sed
+sed -i 's/^[# ]*listen_tls =.*/listen_tls = 0/' /etc/libvirt/libvirtd.conf
+sed -i 's/^[# ]*listen_tcp =.*/listen_tcp = 1/' /etc/libvirt/libvirtd.conf
+sed -i 's/^[# ]*tcp_port =.*/tcp_port = "16509"/' /etc/libvirt/libvirtd.conf
+sed -i 's/^[# ]*auth_tcp =.*/auth_tcp = "none"/' /etc/libvirt/libvirtd.conf
+
+# Останавливаем службу, чтобы избежать блокировок при инициализации сокета
+systemctl stop libvirtd.service || true
+
+# Включаем и запускаем сетевой IP-сокет
+systemctl enable --now libvirtd-tcp.socket
+
+# Запускаем основной демон
+sudo systemctl start libvirtd.service
+
+# Проверка открытого порта
+ss -tlnp | grep 16509
+```
+
+Для включения в 
+
+```
+---
+
+- name: Настройка конфигурации libvirtd
+  lineinfile:
+    path: /etc/libvirt/libvirtd.conf
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+  loop:
+    - { regexp: '^[# ]*listen_tls =', line: 'listen_tls = 0' }
+    - { regexp: '^[# ]*listen_tcp =', line: 'listen_tcp = 1' }
+    - { regexp: '^[# ]*tcp_port =', line: 'tcp_port = "16509"' }
+    - { regexp: '^[# ]*auth_tcp =', line: 'auth_tcp = "none"' }
+
+- name: Остановка службы перед стартом сокета
+  systemd:
+    name: libvirtd.service
+    state: stopped
+
+- name: Активация и запуск сетевого TCP-сокета
+  systemd:
+    name: libvirtd-tcp.socket
+    enabled: yes
+    state: started
+
+- name: Запуск основного демона libvirt
+  systemd:
+    name: libvirtd.service
+    state: started
+
+- name: Ожидание открытия порта 16509
+  wait_for:
+    port: 16509
+    timeout: 5
+```
+
+
+В nano /etc/libvirt/libvirtd.conf
+access_drivers = [ "polkit" ]
+integrity_control = 0
+
+```
+cat << EOF > /etc/polkit-1/rules.d/49-libvirt.rules
+polkit.addRule(function(action, subject) {
+    // Разрешаем доступ ко всем сетевым API вызовам libvirt и драйверам QEMU
+    if (action.id.indexOf("org.libvirt.unix.") === 0 || action.id.indexOf("org.libvirt.api.") === 0) {
+        return polkit.Result.YES;
+    }
+});
+EOF
+```

@@ -81,15 +81,17 @@ def rebuild_flat_tokens():
 
 def libvirt_control(host_ip, vm_name, action):
     """Прямое управление ВМ через API libvirt (локально или удаленно по SSH)"""
-    import libvirt # Импорт внутри для надежности, если глобальный забыли
-    
+
+    # Формируем URI подключения к гипервизору
     if host_ip in ["localhost", "127.0.0.1", ""]:
         uri = "qemu:///system"
     else:
-        uri = f"qemu+ssh://root@{host_ip}/system?no_verify=1"
+        # Сетевое подключение через SSH под пользователем m6v
+        uri = f"qemu+ssh://m6v@{host_ip}/system?no_verify=1"
 
     conn = None
     try:
+        # Открываем SSH-соединение
         conn = libvirt.open(uri)
         if conn is None:
             return {"status": "error", "message": f"Не удалось подключиться к гипервизору {uri}"}
@@ -97,11 +99,11 @@ def libvirt_control(host_ip, vm_name, action):
         dom = conn.lookupByName(vm_name)
         
         if action == "start":
-            dom.create()
+            dom.create()  # Запуск выключенной ВМ
         elif action == "shutdown":
-            dom.shutdown()
+            dom.shutdown()  # Мягкое выключение
         elif action == "destroy":
-            dom.destroy()
+            dom.destroy()  # Жесткое выключение (выдернуть кабель питания)
         else:
             return {"status": "error", "message": f"Неизвестное действие: {action}"}
             
