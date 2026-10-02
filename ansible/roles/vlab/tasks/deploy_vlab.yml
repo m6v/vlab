@@ -6,6 +6,7 @@
       - qemu-guest-agent
       - libvirt-daemon-system
       - virt-manager
+      - ovmf
     state: present
   # Скрыть скрыть вывод stdout
   no_log: true
