@@ -129,6 +129,33 @@
             opacity: 1;
         }
 
+        /* Контекстное меню */
+        #vm-context-menu {
+            display: none;
+            position: absolute;
+            background: var(--sidebar-bg);
+            border: 1px solid var(--border-color);
+            box-shadow: 2px 2px 10px rgba(0,0,0,0.2);
+            z-index: 10000;
+            border-radius: 4px;
+            padding: 4px 0;
+            min-width: 140px;
+            user-select: none;
+            outline: none;
+        }
+        .menu-item-ctrl {
+            padding: 6px 12px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+        .menu-item-ctrl[data-action="destroy"] {
+            color: #c62828;
+        }
+        .menu-item-ctrl:hover {
+            background-color: var(--sidebar-hover);
+            color: HighlightText;
+        }
+
         .content-area {
             flex: 1;
             display: flex;
@@ -184,6 +211,12 @@
     </div>
 </div>
 
+<!-- Контекстное меню — фокусируемый элемент с tabindex -->
+<div id="vm-context-menu" tabindex="-1">
+    <div class="menu-item-ctrl" data-action="start">▶ Запустить</div>
+    <div class="menu-item-ctrl" data-action="destroy">■ Остановить</div>
+</div>
+
 <script>
     let pythonPort = 8000;      // Порт веб-сервера (server.py)
     let websockifyPort = 8085;  // Порт прокси (websockify)
@@ -191,8 +224,11 @@
     const treeContainer = document.getElementById('pve-tree');
     const iframe = document.getElementById('vnc-frame');
     const placeholder = document.getElementById('pve-placeholder');
+    const contextMenu = document.getElementById('vm-context-menu');
+    
+    let activeContextMenuData = null; // Данные машины, по которой кликнули ПКМ
 
-    // Обработчик выбора виртуальной машины инструктором
+    // Обработчик выбора виртуальной машины инструктором (ЛКМ)
     function selectVM(element, token) {
         document.querySelectorAll('.vm-item').forEach(el => el.classList.remove('active'));
         element.classList.add('active');
@@ -200,8 +236,6 @@
         iframe.style.display = 'block';
         
         const host = window.location.hostname;
-        
-        // vnc.html берем с порта server.py, а websockify на порту websockify (8085)
         iframe.src = `http://${host}:${pythonPort}/noVNC-1.6.0/vnc.html?autoconnect=true&resize=scale&host=${host}&port=${websockifyPort}&path=?token=${token}`;
     }
 
@@ -210,17 +244,35 @@
         sublistElement.classList.toggle('hidden');
     }
 
+    // Вынос сетевого запроса в отдельную изолированную чистую функцию
+    function executeVmCommand(host, vm, action) {
+        if (action === 'destroy' && !confirm(`Вы действительно хотите ЖЕСТКО остановить ${vm} на ${host}?`)) {
+            return;
+        }
+
+        fetch('/api/vm/control', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ host, vm, action })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.status !== 'success') {
+                alert(`Ошибка Libvirt: ${data.message}`);
+            }
+        })
+        .catch(err => console.error('Сетевая ошибка при отправке команды:', err));
+    }
+
     function loadTreeData() {
         fetch('/api/tokens')
             .then(response => response.json())
             .then(data => {
-                // Автоматическое извлечение и обновление портов из секции config
                 if (data.config) {
                     pythonPort = data.config.pythonPort;
                     websockifyPort = data.config.websockifyPort;
                 }
 
-                // Получение дерева хостов из секции tree (если сервер прислал старый формат, берем data целиком)
                 const treeData = data.tree || data;
 
                 const manualStates = {};
@@ -253,13 +305,13 @@
                         const vmItem = document.createElement('li');
                         vmItem.className = 'vm-item';
                         
-                        // Удаление имени узла (первая часть токена до дефиса)
+                        // Извлекаем оригинальное имя ВМ для libvirt (например, "arm-abi")
+                        const vmOriginalName = tokenName.substring(nodeName.length + 1);
+
+                        // Форматирование отображаемого имени на основе токена
                         let cleanName = tokenName.split('-').slice(1).join('-');
-                        
-                        // Удаление префиксов (цифры и дефисы в начале строки, например, 1-, 02-)
                         cleanName = cleanName.replace(/^\d+-+/, '');
                         
-                        // Запись очищенного имени в элемент списка
                         vmItem.innerText = cleanName; 
                         
                         if (status === 'online') {
@@ -267,10 +319,25 @@
                             nodeHasActiveVms = true;
                         }
                         
+                        // Обработчик нажатия ЛКМ (выбор и отображение экрана)
                         vmItem.onclick = function(e) {
-                            e.stopPropagation();
                             selectVM(this, tokenName);
                         };
+
+                        // Обработчик нажатия ПКМ (вызов контекстного меню управления питанием)
+                        /* Временно отключен!
+                        vmItem.oncontextmenu = function(e) {
+                            e.preventDefault();
+                            e.stopPropagation();
+
+                            activeContextMenuData = { host: nodeName, vm: vmOriginalName };
+
+                            contextMenu.style.left = `${e.pageX}px`;
+                            contextMenu.style.top = `${e.pageY}px`;
+                            contextMenu.style.display = 'block';
+                            contextMenu.focus();
+                        };
+                        */
                         
                         sublist.appendChild(vmItem);
                     });
@@ -297,10 +364,26 @@
             })
             .catch(err => console.error('Ошибка обновления дерева:', err))
             .finally(() => {
-                // Отправка следующего запроса через 5 секунд после завершения текущего
                 setTimeout(loadTreeData, 5000);
             });
     }
+
+    // Скрытие контестного меню при как только оно теряет фокус (клик в любое другое место экрана или iframe)
+    contextMenu.onblur = function() {
+        this.style.display = 'none';
+    };
+
+    // Делегирование события клика в само меню
+    contextMenu.onclick = function(e) {
+        const item = e.target.closest('.menu-item-ctrl');
+        if (!item || !activeContextMenuData) return;
+
+        const action = item.getAttribute('data-action');
+        executeVmCommand(activeContextMenuData.host, activeContextMenuData.vm, action);
+        
+        // Скрытие меню сразу после выбора элемента команде
+        this.style.display = 'none';
+    };
 
     // Запуск первичного рендеринга и цикл автообновления дерева
     loadTreeData();

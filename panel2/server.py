@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import http.server
 import json
+import libvirt
 import os
 import subprocess
 import sys
@@ -8,7 +9,7 @@ import time
 import socket
 import argparse
 
-# Глобальные переменные для передачи актуальных портов запуска в API-обработчик
+# Глобальные переменные для передачи портов в API-обработчик
 CURRENT_PYTHON_PORT = 8000
 CURRENT_WEBSOCKIFY_PORT = 8085
 
@@ -78,6 +79,42 @@ def rebuild_flat_tokens():
 
     return tokens_tree
 
+def libvirt_control(host_ip, vm_name, action):
+    """Прямое управление ВМ через API libvirt (локально или удаленно по SSH)"""
+    import libvirt # Импорт внутри для надежности, если глобальный забыли
+    
+    if host_ip in ["localhost", "127.0.0.1", ""]:
+        uri = "qemu:///system"
+    else:
+        uri = f"qemu+ssh://root@{host_ip}/system?no_verify=1"
+
+    conn = None
+    try:
+        conn = libvirt.open(uri)
+        if conn is None:
+            return {"status": "error", "message": f"Не удалось подключиться к гипервизору {uri}"}
+        
+        dom = conn.lookupByName(vm_name)
+        
+        if action == "start":
+            dom.create()
+        elif action == "shutdown":
+            dom.shutdown()
+        elif action == "destroy":
+            dom.destroy()
+        else:
+            return {"status": "error", "message": f"Неизвестное действие: {action}"}
+            
+        return {"status": "success"}
+
+    except libvirt.libvirtError as e:
+        return {"status": "error", "message": f"Ошибка Libvirt: {e.get_error_message()}"}
+    except Exception as e:
+        return {"status": "error", "message": f"Системная ошибка: {str(e)}"}
+    finally:
+        if conn:
+            conn.close()
+
 class NoVNCHandler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         # Настройка пути к статике из корня проекта, где лежит index.html
@@ -108,6 +145,56 @@ class NoVNCHandler(http.server.SimpleHTTPRequestHandler):
             return
 
         super().do_GET()
+
+
+    def do_POST(self):
+        """Обработка команд управления питанием ВМ"""
+        if self.path == '/api/vm/control':
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+            
+            try:
+                req = json.loads(post_data.decode('utf-8'))
+                host_key = req.get('host')  # Например: "арм-1"
+                vm_name = req.get('vm')    # Например: "arm-abi"
+                action = req.get('action')  # 'start', 'shutdown', 'destroy'
+                
+                if not host_key or not vm_name or not action:
+                    raise ValueError("Отсутствуют параметры 'host', 'vm' или 'action'")
+
+                host_ip = "localhost"
+                
+                # Ищем IP-адрес нужного физического АРМа в конфигурации
+                if os.path.exists(JSON_TOKENS_FILE):
+                    with open(JSON_TOKENS_FILE, 'r', encoding='utf-8') as f:
+                        config_data = json.load(f)
+                        if host_key in config_data:
+                            host_ip = config_data[host_key].get("ip", "localhost").strip()
+
+                # Вызываем управление через libvirt-python
+                # Подключение пойдет на host_ip (например, 192.168.1.128) к машине vm_name (например, arm-abi)
+                result = libvirt_control(host_ip, vm_name, action)
+                
+                if result["status"] == "success":
+                    self.send_response(200)
+                else:
+                    self.send_response(500)
+                    
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps(result).encode('utf-8'))
+
+            except Exception as e:
+                self.send_response(400)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "error", "message": str(e)}).encode('utf-8'))
+            return
+
+        self.send_response(404)
+        self.end_headers()
+        self.end_headers()
+
 
 def start_websockify(websockify_port):
     """Запуск go-websockify в режиме чтения файла токенов с динамическим портом"""
