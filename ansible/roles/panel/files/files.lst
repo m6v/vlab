@@ -1,1 +1,17 @@
 # Пакеты для установки websockify из базового и расширенного репозиториев Astra Linux SE 1.7.6.15
+-rw-r--r-- 1 m6v users  819952 авг 24 09:25 novnc_1.0.0-1_all.deb
+-rw-r--r-- 1 m6v users 2107224 авг 24 09:25 python3-numpy_1.16.2-1+b1_amd64.deb
+-rw-r--r-- 1 m6v users   32100 авг 24 09:25 python3-websockify_0.8.0+dfsg1-10_amd64.deb
+-rw-r--r-- 1 m6v users   97428 авг 24 09:25 python-babel_2.6.0+dfsg.1-1+deb10u1_all.deb
+-rw-r--r-- 1 m6v users   13422 авг 24 09:25 python-debtcollector_1.20.0-2_all.deb
+-rw-r--r-- 1 m6v users  379838 авг 24 09:25 python-docutils_0.14+dfsg-4_all.deb
+-rw-r--r-- 1 m6v users   16864 авг 24 09:25 python-novnc_1.0.0-1_all.deb
+-rw-r--r-- 1 m6v users  108024 авг 24 09:25 python-oslo.config_6.4.1-1_all.deb
+-rw-r--r-- 1 m6v users   19838 авг 24 09:25 python-oslo.i18n_3.21.0-2_all.deb
+-rw-r--r-- 1 m6v users   14816 авг 24 09:25 python-rfc3986_0.3.1-2_all.deb
+-rw-r--r-- 1 m6v users    8614 авг 24 09:25 python-roman_2.0.0-3_all.deb
+-rw-r--r-- 1 m6v users   19674 авг 24 09:25 python-stevedore_1.29.0-2_all.deb
+-rw-r--r-- 1 m6v users   36988 авг 24 09:25 python-wrapt_1.10.11-1+b1_amd64.deb
+-rw-r--r-- 1 m6v users  126264 авг 24 09:25 python-yaml_5.1.2-1+b1_amd64.deb
+-rw-r--r-- 1 m6v users   23648 авг 24 09:25 websockify_0.8.0+dfsg1-10_amd64.deb
+-rw-r--r-- 1 m6v users   29240 авг 24 09:25 websockify-common_0.8.0+dfsg1-10_all.deb
