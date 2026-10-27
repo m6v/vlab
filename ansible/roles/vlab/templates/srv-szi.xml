@@ -9,6 +9,7 @@
   <os>
     <type arch='x86_64' machine='q35'>hvm</type>
     <boot dev='hd'/>
+    <boot dev='cdrom'/>
   </os>
 
   <metadata>
@@ -37,6 +38,7 @@
     <disk type='file' device='cdrom'>
       <driver name='qemu' type='raw'/>
       <target dev='sda' bus='sata'/>
+      <source file='/var/lib/libvirt/images/astra-1.7_x86-64.iso'/>
       <readonly/>
     </disk>
 

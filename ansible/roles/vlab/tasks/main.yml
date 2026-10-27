@@ -5,7 +5,7 @@
     # Переменные окружения, передаваемые внутрь контекста become_user
     LIBVIRT_DEFAULT_URI: "qemu:///system"
   block:
-    - name: Маршрутизация задачи deploy_vlab
+    - name: Маршрутизация задачи развертывания среды виртуализации
       include_tasks: "deploy_vlab.yml"
 
 - name: Ветка остальных задач, выполняемых от имени user

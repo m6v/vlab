@@ -5,6 +5,8 @@
 -rw------- 1 libvirt-qemu libvirt-qemu  3851223040 июн  9  2022 astra-1.7_x86-64.iso
 -rw------- 1 libvirt-qemu libvirt-qemu  2148073472 июн 16 11:40 ipc-master.qcow2
 -rw------- 1 libvirt-qemu libvirt-qemu  2148073472 июн 16 11:53 ipc-slave.qcow2
--rw------- 1 libvirt-qemu libvirt-qemu  4396134400 июл 18  2025 main_update-1.7.6.15-15.11.24_17.20.iso
 -rw------- 1 libvirt-qemu libvirt-qemu  2162819072 июн 15 16:12 rubicon.qcow2
 -rw------- 1 libvirt-qemu libvirt-qemu      197120 авг 24 09:25 srv-szi.qcow2
+NB! qcow2-образы копировать сюда, ТОЛЬКО ИСПОЛЬЗУЯ ПАРАМЕТР --sparse=always, например, cp --sparse=always source.qcow2 dest.qcow2, иначе они "раздуются" до своей максимальной емкости!
+    Если скопировали файл без параметра --sparse=always, выполнить сжатие повторно
+    После копирования установить права 444, чтобы запретить изменения, иначе оверлейные образы этих дисков после случайных изменений базовых образов станут неработоспособными!

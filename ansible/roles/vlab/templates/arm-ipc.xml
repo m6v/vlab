@@ -1,19 +1,22 @@
 <domain type='kvm'>
   <name>{{ item }}</name>
   <title>АРМ управления СКЗИ</title>
-  <description>АРМ управления АПКШ "Континент". Для входа использовать логин 'administrator' и пароль '11111111'</description>
+  <description>АРМ управления АПКШ "Континент". Для входа использовать логин 'admin' и пароль '11111111'</description>
   <memory unit='KiB'>4194304</memory>
   <currentMemory unit='KiB'>4194304</currentMemory>
   <vcpu placement='static'>2</vcpu>
 
   <os>
     <type arch='x86_64' machine='q35'>hvm</type>
+    <loader readonly='yes' type='pflash'>/usr/share/OVMF/OVMF_CODE_4M.fd</loader>
+    <nvram template='/usr/share/OVMF/OVMF_VARS_4M.fd'/>
     <boot dev='hd'/>
+    <bootmenu enable='yes' timeout='30000'/>
   </os>
 
   <metadata>
-    <libosinfo:libosinfo xmlns:libosinfo="http://libosinfo.org/xmlns/libvirt/domain/1.0">
-      <libosinfo:os id="http://microsoft.com/win/10" label="Microsoft Windows 10"/>
+    <libosinfo:libosinfo xmlns:libosinfo="http://libosinfo.org">
+      <libosinfo:os id="http://microsoft.com" label="Microsoft Windows 10"/>
     </libosinfo:libosinfo>
   </metadata>
 
@@ -23,6 +26,7 @@
   </features>
 
   <cpu mode='host-passthrough'/>
+
   <clock offset='utc'/>
 
   <devices>
@@ -31,8 +35,7 @@
     <disk type='volume' device='disk'>
       <driver name='qemu' type='qcow2' cache='writeback'/>
       <source pool='{{ user_pool_name }}' volume='{{ item }}.qcow2'/>
-      <target dev='sda' bus='sata'/>
-      <address type="drive" controller="0" bus="0" target="0" unit="0"/>
+      <target dev='vda' bus='virtio'/>
     </disk>
 
     <disk type='file' device='cdrom'>
@@ -44,6 +47,7 @@
 
     <interface type='network'>
       <source network='extnet'/>
+      <mac address='52:54:00:12:34:56'/>
       <model type='virtio'/>
     </interface>
 
@@ -60,6 +64,17 @@
     <video>
       <model type='virtio' vram='65536' heads='1' primary='yes'/>
     </video>
+
+    <controller type='usb' index='0' model='qemu-xhci'>
+      <alias name='usb3'/>
+    </controller>
+
+    <input type='tablet' bus='usb'>
+      <address type='usb' bus='0' port='1'/>
+    </input>
+    <input type='keyboard' bus='usb'>
+      <address type='usb' bus='0' port='2'/>
+    </input>
 
     <console type='pty'>
       <target type='serial' port='0'/>

@@ -15,6 +15,6 @@
     - name: Сохранение настроек авторизации на время текущей сессии
       # Выполняем только один раз для каждого хоста
       set_fact:
-        ansible_user: "{{ input_user if input_user | length > 0 else 'administrator' }}"
-        ansible_password: "{{ input_password if input_password | length > 0 else omit }}"
-        ansible_become_password: "{{ input_password if input_password | length > 0 else omit }}"
+        ansible_user: "{{ input_user | default('administrator', true) }}"
+        ansible_password: "{{ input_password | default(omit, true) }}"
+        ansible_become_password: "{{ input_password | default(omit, true) }}"

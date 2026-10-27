@@ -17,6 +17,12 @@ if [ "$(id -u)" -ne 0 ]; then
     exec sudo "$0" "$@"
 fi
 
+if ! command -v ansible &> /dev/null; then
+    echo "Установка Ansible..."
+    sudo apt-get update
+    sudo apt-get install -y ansible
+fi
+
 # Проверка наличия файла инвентаря
 if [ ! -f "$INVENTORY_FILE" ]; then
     whiptail --title "Ошибка" --msgbox "Файл инвентаря '$INVENTORY_FILE' не найден!" 8 55
