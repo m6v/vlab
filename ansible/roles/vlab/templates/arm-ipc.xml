@@ -11,7 +11,7 @@
     <loader readonly='yes' type='pflash'>/usr/share/OVMF/OVMF_CODE_4M.fd</loader>
     <nvram template='/usr/share/OVMF/OVMF_VARS_4M.fd'/>
     <boot dev='hd'/>
-    <bootmenu enable='yes' timeout='30000'/>
+    <bootmenu enable='yes' timeout='3000'/>
   </os>
 
   <metadata>

@@ -1,7 +1,7 @@
 <domain type='kvm'>
   <name>{{ item }}</name>
   <title>КШ с ЦУС</title>
-  <description>Криптошлюз "Континент" с ЦУС</description>
+  <description>Криптошлюз "Континент" с ЦУС. Id устройства 1111</description>
   <memory unit='KiB'>524288</memory>
   <currentMemory unit='KiB'>524288</currentMemory>
   <vcpu placement='static'>1</vcpu>

@@ -23,6 +23,13 @@ if ! command -v ansible &> /dev/null; then
     sudo apt-get install -y ansible
 fi
 
+if ! command -v rsunc &> /dev/null; then
+    echo "Установка rsync..."
+    sudo apt-get update
+    sudo apt-get install -y rsync
+fi
+
+
 # Проверка наличия файла инвентаря
 if [ ! -f "$INVENTORY_FILE" ]; then
     whiptail --title "Ошибка" --msgbox "Файл инвентаря '$INVENTORY_FILE' не найден!" 8 55
