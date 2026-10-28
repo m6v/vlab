@@ -34,4 +34,3 @@
   copy:
     src: web-panel.desktop
     dest: "{{ desktop_path }}"
-  when: inventory_hostname == 'iws'

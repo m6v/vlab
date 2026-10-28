@@ -8,7 +8,7 @@
         /* Автоматическая поддержка темной/светлой темы на системном уровне */
         :root {
             color-scheme: light dark;
-            
+
             /* Системные переменные цветов */
             --bg-main: Canvas;
             --pve-dark: CanvasText;
@@ -16,7 +16,7 @@
             --sidebar-bg: ButtonFace;
             --sidebar-hover: Highlight;
             --pve-orange: AccentColor;      
-            
+
             /* Цвета состояний элементов дерева */
             --node-offline: GrayText;
             --node-active: color-mix(in srgb, CanvasText 85%, transparent); /* Темно-серый */
@@ -178,7 +178,7 @@
     <div class="content-area">
         <div class="placeholder-view" id="pve-placeholder">
             <h2>Добро пожаловать в панель управления виртуальными машинами</h2>
-            <p>Выберите виртуальную машину в дереве слева для вывода экрана</p>
+            <p>Выберите виртуальную машину в боковой панели для вывода интерфейса на экран</p>
         </div>
         <iframe id="vnc-frame" src="" style="white-space: normal;"></iframe>
     </div>
@@ -187,7 +187,7 @@
 <script>
     let pythonPort = 8000;      // Порт веб-сервера (server.py)
     let websockifyPort = 8085;  // Порт прокси (websockify)
-    
+
     const treeContainer = document.getElementById('pve-tree');
     const iframe = document.getElementById('vnc-frame');
     const placeholder = document.getElementById('pve-placeholder');
@@ -198,9 +198,9 @@
         element.classList.add('active');
         placeholder.style.display = 'none';
         iframe.style.display = 'block';
-        
+
         const host = window.location.hostname;
-        
+
         // vnc.html берем с порта server.py, а websockify на порту websockify (8085)
         iframe.src = `http://${host}:${pythonPort}/noVNC-1.6.0/vnc.html?autoconnect=true&resize=scale&host=${host}&port=${websockifyPort}&path=?token=${token}`;
     }
