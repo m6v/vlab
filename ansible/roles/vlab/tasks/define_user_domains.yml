@@ -30,7 +30,7 @@
     vm_icon: "{{ item }}.png"
   loop: "{{ user_domains }}"
 
-- name: Создание пиктограммы для доступа к веб-панели
+- name: Создание ярлыка для доступа к веб-панели
   copy:
     src: web-panel.desktop
     dest: "{{ desktop_path }}"
