@@ -101,6 +101,14 @@
     - "/tmp/packages/vlab-servers*.deb"
   become: true
 
+- name: Установка имитатора ПАК "Соболь"
+  apt:
+    deb: "{{ item }}"
+  # fileglob ищет файлы на целевой машине
+  with_fileglob:
+    - "/tmp/packages/vlab-sobol4*.deb"
+  become: true
+
 - name: Установка веб-панели
   apt:
     deb: "{{ item }}"
