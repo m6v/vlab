@@ -33,19 +33,21 @@ def check_port(ip, port):
         return False
 
 def rebuild_flat_tokens():
-    """Парсинг json-файла конфигурации, проверка статуса ВМ и генерация файла с токенами"""
+    """Парсинг конфигурации с перехватом синтаксических ошибок для отправки в UI"""
     tokens_tree = {}
     flat_lines = []
 
     if not os.path.exists(JSON_TOKENS_FILE):
-        print(f"Ошибка: Файл конфигурации {JSON_TOKENS_FILE} не найден!", file=sys.stderr)
-        return tokens_tree
+        return {"_error": f"Файл конфигурации {JSON_TOKENS_FILE} не найден!"}
 
     try:
         with open(JSON_TOKENS_FILE, 'r', encoding='utf-8') as f:
             config_data = json.load(f)
 
         for vm_name, vm_info in config_data.items():
+            if not isinstance(vm_info, dict):
+                continue
+
             ip_address = vm_info.get("ip", "").strip()
             tokens_dict = vm_info.get("tokens", {})
 
@@ -72,9 +74,12 @@ def rebuild_flat_tokens():
             f.writelines(flat_lines)
 
     except json.JSONDecodeError as je:
-        print(f"Ошибка синтаксиса в файле конфигурации: {je}", file=sys.stderr)
+        # Формируем понятную ошибку с указанием строки и позиции
+        error_msg = f"Ошибка синтаксиса JSON (строка {je.lineno}, символ {je.colno}): {je.msg}"
+        print(f"[ОШИБКА КОНФИГУРАЦИИ] {error_msg}", file=sys.stderr)
+        return {"_error": error_msg}
     except Exception as e:
-        print(f"Ошибка при обработке файла конфигурации: {e}", file=sys.stderr)
+        return {"_error": f"Критическая ошибка бэкенда: {str(e)}"}
 
     return tokens_tree
 

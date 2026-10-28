@@ -177,7 +177,7 @@
     </div>
     <div class="content-area">
         <div class="placeholder-view" id="pve-placeholder">
-            <h2>Добро пожаловать в панель инструктора</h2>
+            <h2>Добро пожаловать в панель управления виртуальными машинами</h2>
             <p>Выберите виртуальную машину в дереве слева для вывода экрана</p>
         </div>
         <iframe id="vnc-frame" src="" style="white-space: normal;"></iframe>
@@ -214,90 +214,113 @@
         fetch('/api/tokens')
             .then(response => response.json())
             .then(data => {
-                // Автоматическое извлечение и обновление портов из секции config
+                // Обновляем порты, если они пришли
                 if (data.config) {
                     pythonPort = data.config.pythonPort;
                     websockifyPort = data.config.websockifyPort;
                 }
 
-                // Получение дерева хостов из секции tree (если сервер прислал старый формат, берем data целиком)
                 const treeData = data.tree || data;
+                const nodesCount = Object.keys(treeData).length;
 
+                // Запоминаем выбранный токен, чтобы не сбрасывать активную ВМ
+                const activeItem = document.querySelector('.vm-item.active');
+                const previousActiveToken = activeItem ? activeItem.getAttribute('data-token') : null;
+
+                // Сохраняем состояние свернутости папок (нужно только если узлов > 1)
                 const manualStates = {};
-                document.querySelectorAll('.node-item').forEach(el => {
-                    const titleEl = el.querySelector('span:not(.node-toggle)');
-                    if (titleEl) manualStates[titleEl.innerText] = el.classList.contains('collapsed');
-                });
+                if (nodesCount > 1) {
+                    document.querySelectorAll('.node-item').forEach(el => {
+                        const titleEl = el.querySelector('span:not(.node-toggle)');
+                        if (titleEl) manualStates[titleEl.innerText] = el.classList.contains('collapsed');
+                    });
+                }
 
                 treeContainer.innerHTML = '';
-                
+
+                // === Универсальный и чистый обход данных ===
                 Object.keys(treeData).forEach(nodeName => {
                     const nodeIp = treeData[nodeName]["ip"];
-                    const vmsList = treeData[nodeName]["vms"];
+                    const vmsList = treeData[nodeName]["vms"] || [];
                     const nodeFullTitle = `${nodeName} (${nodeIp})`;
-                    
-                    const sublist = document.createElement('ul');
-                    sublist.className = 'vm-sublist hidden';
 
-                    const node = document.createElement('div');
-                    node.className = 'node-item collapsed'; 
-                    node.innerHTML = `<span class="node-toggle">▼</span> <span>${nodeFullTitle}</span>`;
-                    node.onclick = function() { toggleNode(this, sublist); };
+                    const sublist = document.createElement('ul');
+                    sublist.className = 'vm-sublist';
 
                     let nodeHasActiveVms = false;
 
+                    // Отрисовка списка виртуальных машин
                     vmsList.forEach(vmObject => {
                         const tokenName = vmObject.token;
                         const status = vmObject.status;
-                        
+
                         const vmItem = document.createElement('li');
                         vmItem.className = 'vm-item';
-                        
-                        // Удаление имени узла (первая часть токена до дефиса)
+                        vmItem.setAttribute('data-token', tokenName);
+
+                        // Если узел всего один, убираем левый отступ (чтобы не было пустой дыры без папки)
+                        if (nodesCount === 1) {
+                            vmItem.style.paddingLeft = '1rem';
+                        }
+
+                        // Очистка имени от префиксов
                         let cleanName = tokenName.split('-').slice(1).join('-');
-                        
-                        // Удаление префиксов (цифры и дефисы в начале строки, например, 1-, 02-)
                         cleanName = cleanName.replace(/^\d+-+/, '');
-                        
-                        // Запись очищенного имени в элемент списка
-                        vmItem.innerText = cleanName; 
-                        
+                        vmItem.innerText = cleanName;
+
                         if (status === 'online') {
                             vmItem.classList.add('online');
                             nodeHasActiveVms = true;
                         }
-                        
+
+                        if (tokenName === previousActiveToken) {
+                            vmItem.classList.add('active');
+                        }
+
                         vmItem.onclick = function(e) {
                             e.stopPropagation();
                             selectVM(this, tokenName);
                         };
-                        
+
                         sublist.appendChild(vmItem);
                     });
 
-                    if (nodeHasActiveVms) {
-                        node.classList.add('node-active');
-                        node.classList.remove('collapsed');
-                        sublist.classList.remove('hidden');
-                    }
+                    // Если узлов несколько — создаем полноценное дерево с папками хостов
+                    if (nodesCount > 1) {
+                        sublist.classList.add('hidden'); // по умолчанию скрываем списки в дереве
 
-                    if (manualStates[nodeFullTitle] !== undefined) {
-                        if (manualStates[nodeFullTitle] === true) {
-                            node.classList.add('collapsed');
-                            sublist.classList.add('hidden');
-                        } else {
+                        const node = document.createElement('div');
+                        node.className = 'node-item collapsed';
+                        node.innerHTML = `<span class="node-toggle">▼</span> <span>${nodeFullTitle}</span>`;
+                        node.onclick = function() { toggleNode(this, sublist); };
+
+                        // Логика автоматического раскрытия/сворачивания папок
+                        if (manualStates[nodeFullTitle] !== undefined) {
+                            if (manualStates[nodeFullTitle] === true) {
+                                node.classList.add('collapsed');
+                                sublist.classList.add('hidden');
+                            } else {
+                                node.classList.remove('collapsed');
+                                sublist.classList.remove('hidden');
+                            }
+                        } else if (nodeHasActiveVms) {
                             node.classList.remove('collapsed');
                             sublist.classList.remove('hidden');
                         }
+
+                        if (nodeHasActiveVms) node.classList.add('node-active');
+
+                        treeContainer.appendChild(node);
+                    } else {
+                        // Если узел ОДИН — принудительно показываем список без создания заголовка папки
+                        sublist.style.setProperty('display', 'block', 'important');
                     }
 
-                    treeContainer.appendChild(node);
                     treeContainer.appendChild(sublist);
                 });
             })
             .catch(err => console.error('Ошибка обновления дерева:', err))
             .finally(() => {
-                // Отправка следующего запроса через 5 секунд после завершения текущего
                 setTimeout(loadTreeData, 5000);
             });
     }
