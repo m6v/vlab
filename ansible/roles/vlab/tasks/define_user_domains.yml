@@ -29,3 +29,9 @@
     vm_title: "{{ lookup('file', 'templates/' ~ item ~ '.xml') | regex_search('<title>(.*?)</title>', '\\1') | first | default(item, true) }}"
     vm_icon: "{{ item }}.png"
   loop: "{{ user_domains }}"
+
+- name: Создание пиктограммы для доступа к веб-панели
+  copy:
+    src: web-panel.desktop
+    dest: "{{ desktop_path }}"
+  when: inventory_hostname == 'iws'

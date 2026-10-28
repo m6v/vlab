@@ -35,3 +35,9 @@
   loop: "{{ vlab_shortcuts.stdout_lines }}"
   loop_control:
     label: "{{ item | basename }}"
+
+- name: Удаление ярлыка для доступа к веб-панели
+  file:
+    path: "{{ desktop_path }}/web-panel.desktop"
+    state: absent
+  when: inventory_hostname == 'iws'

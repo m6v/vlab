@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Веб-панель инструктора
+Type=Application
+NoDisplay=false
+Exec=xdg-open http://127.0.0.1:8000
+Icon=virt-manager
+Hidden=false
+Terminal=false
+StartupNotify=false
