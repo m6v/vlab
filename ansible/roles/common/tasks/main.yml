@@ -42,7 +42,7 @@
   loop:
     - src: /var/lib/libvirt/images/astra-1.7_x86-64.iso
       path: /srv/repo/alse/main
-    - src: /var/lib/libvirt/images/main_update-1.7.6.15-15.11.24_17.20.iso
+    - src: /var/lib/libvirt/images/main_update-1.7.8.6-16.09.25_14.55.iso
       path: /srv/repo/alse/update-main
 
 - name: Обновление кэша apt и установка nftables и rsync

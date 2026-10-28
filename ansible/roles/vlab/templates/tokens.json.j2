@@ -1,0 +1,17 @@
+{
+{% if 'instructor' in group_names %}
+  {# На панели АРМ инструктора выводим виртуальные машины всех хостов класса #}
+  {% for host in groups['class'] %}
+  "{{ hostvars[host]['inventory_hostname'] }}": {
+    "ip": "{{ hostvars[host]['ansible_host'] }}",
+    "tokens": {{ vnc_tokens | to_json }}
+  }{% if not loop.last %},{% endif %}
+  {% endfor %}
+{% else %}
+  {# На панели обучаемого выводим только свои виртуальные машины #}
+  "{{ inventory_hostname }}": {
+    "ip": "{{ ansible_host }}",
+    "tokens": {{ vnc_tokens | to_json }}
+  }
+{% endif %}
+}

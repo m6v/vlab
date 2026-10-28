@@ -1,2 +1,10 @@
 ---
-
+# Общие переменные для всего учебного класса
+vnc_tokens:
+  arm-abi: 5913
+  srv-szi: 5912
+  rubicon: 5911
+  arm-o: 5903
+  arm-ipc: 5904
+  ipc-master: 5905
+  ipc-slave: 5915

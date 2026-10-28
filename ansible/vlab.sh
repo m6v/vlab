@@ -19,14 +19,14 @@ fi
 
 if ! command -v ansible &> /dev/null; then
     echo "Установка Ansible..."
-    sudo apt-get update
-    sudo apt-get install -y ansible
+    # apt-get update
+    apt-get install -y ansible
 fi
 
 if ! command -v rsunc &> /dev/null; then
     echo "Установка rsync..."
-    sudo apt-get update
-    sudo apt-get install -y rsync
+    # apt-get update
+    apt-get install -y rsync
 fi
 
 
