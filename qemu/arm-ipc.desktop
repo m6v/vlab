@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=АРМ управления СКЗИ
+Comment=Запуск виртуальной машины АРМ управления СКЗИ
+Exec=/usr/local/bin/vmctrl start arm-ipc
+Icon=arm-ipc.png
+Terminal=false
+StartupNotify=true
+Categories=System;Emulator;
+X-Related-To=vlab

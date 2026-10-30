@@ -1,0 +1,54 @@
+#!/bin/bash
+
+CONFIG_DIR="$HOME/.local/share/qemu"
+
+if [ -z "$1" ] || [ -z "$2" ]; then
+    echo "Использование: $0 <start|stop> <имя_машины>" >&2
+    exit 1
+fi
+
+ACTION="$1"
+export VM_NAME="$2"
+CONF_FILE="${CONFIG_DIR}/${VM_NAME}.conf"
+
+if [ ! -f "$CONF_FILE" ]; then
+    echo "Ошибка: Файл конфигурации не найден." >&2
+    exit 1
+fi
+
+# Подготовка чистого конфига с раскрытыми переменными для парсинга и запуска
+CLEAN_CONF=$(envsubst '$HOME,$VM_NAME' < "$CONF_FILE")
+
+# Определение номера порта с учетом базы 5900 и номера дисплея, задаваемого в конфиге
+VNC_ADDR=$(echo "$CLEAN_CONF" | awk -F'[: ,]' '$1=="-vnc" {print ($2=="0.0.0.0" ? "127.0.0.1" : $2) ":" (5900+$3)}')
+
+case "$ACTION" in
+    start)
+        # Если процесс запущен, предупредить удаление управляющего сокета и повторный запуск
+        if ! pgrep -f "qemu-system-x86_64.*-name ${VM_NAME}\b" > /dev/null; then
+            rm -f "/tmp/${VM_NAME}.sock"
+            # Склеивание строк конфига через пробел и запуск виртуальной машины
+            eval "qemu-system-x86_64 $(echo "$CLEAN_CONF" | paste -sd ' ' -)"
+            sleep 1
+        fi
+
+        # Отключение поиска шины доступности AT-SPI в D-Bus
+        export NO_AT_BRIDGE=1
+        remote-viewer "vnc://$VNC_ADDR" >/dev/null 2>&1 &
+        ;;
+
+    stop)
+        # Штатное выключение через отправку команды в управляющий сокет
+        if [ -S "/tmp/${VM_NAME}.sock" ]; then
+            echo "system_powerdown" | nc -N -U "/tmp/${VM_NAME}.sock" >/dev/null
+        else
+            echo "Ошибка: Управляющий сокет для '${VM_NAME}' не найден." >&2
+            exit 1
+        fi
+        ;;
+
+    *)
+        echo "Ошибка: Неизвестное действие '$ACTION'." >&2
+        exit 1
+        ;;
+esac

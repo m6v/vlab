@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=ПАК "Рубикон"
+Comment=Запуск виртуальной машины ПАК "Рубикон"
+Exec=/usr/local/bin/vmctrl start rubicon
+Icon=rubicon.png
+Terminal=false
+StartupNotify=true
+Categories=System;Emulator;
+X-Related-To=vlab

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=АРМ АБИ
+Comment=Запуск виртуальной машины АРМ АБИ
+Exec=/usr/local/bin/vmctrl start arm-abi
+Icon=arm-abi.png
+Terminal=false
+StartupNotify=true
+Categories=System;Emulator;
+X-Related-To=vlab

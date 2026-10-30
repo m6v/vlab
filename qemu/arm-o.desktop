@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=АРМ оператора
+Comment=Запуск виртуальной машины АРМ-О
+Exec=/usr/local/bin/vmctrl start arm-o
+Icon=arm-o.png
+Terminal=false
+StartupNotify=true
+Categories=System;Emulator;
+X-Related-To=vlab

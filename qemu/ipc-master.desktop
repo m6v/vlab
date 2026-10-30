@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=КШ с ЦУС
+Comment=Запуск виртуальной машины КШ с ЦУС
+Exec=/usr/local/bin/vmctrl start ipc-master
+Icon=ipc-master.png
+Terminal=false
+StartupNotify=true
+Categories=System;Emulator;
+X-Related-To=vlab

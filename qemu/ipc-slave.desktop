@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=КШ
+Comment=Запуск виртуальной машины КШ
+Exec=/usr/local/bin/vmctrl ipc-slave
+Icon=ipc-slave.png
+Terminal=false
+StartupNotify=true
+Categories=System;Emulator;
+X-Related-To=vlab

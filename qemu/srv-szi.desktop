@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Сервер СЗИ
+Comment=Запуск виртуальной машины сервера СЗИ
+Exec=/usr/local/bin/vmctrl start srv-szi
+Icon=srv-szi.png
+Terminal=false
+StartupNotify=true
+Categories=System;Emulator;
+X-Related-To=vlab
