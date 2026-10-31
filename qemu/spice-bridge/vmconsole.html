@@ -1,0 +1,131 @@
+<!doctype html>
+<html>
+<head>
+    <title>Консоль ВМ</title>
+    <meta charset="utf-8">
+    <style>
+        /* Полное обнуление полей и фиксация фона */
+        html, body {
+            margin: 0 !important;
+            padding: 0 !important;
+            width: 100% !important;
+            height: 100% !important;
+            background-color: #111 !important;
+            overflow: hidden !important;
+        }
+
+        /* Центрируем контейнер экрана строго по границам вкладки */
+        #spice-area {
+            width: 100vw !important;
+            height: 100vh !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            overflow: hidden !important;
+            display: flex !important;
+            justify-content: center !important;
+            align-items: center !important;
+            position: relative !important;
+        }
+
+        #spice-screen {
+            width: 100% !important;
+            height: 100% !important;
+            display: flex !important;
+            justify-content: center !important;
+            align-items: center !important;
+            margin: 0 !important;
+            padding: 0 !important;
+        }
+
+        /* Аппаратное масштабирование динамического Canvas с сохранением пропорций */
+        #spice-screen canvas {
+            width: 100vw !important;
+            height: 100vh !important;
+            object-fit: contain !important; 
+            margin: 0 !important;
+            padding: 0 !important;
+            position: absolute !important;
+            top: 50% !important;
+            left: 50% !important;
+            transform: translate(-50%, -50%) !important;
+        }
+    </style>
+
+    <!-- Загружаем ядро SPICE как современный ES6-модуль -->
+    <script type="module" crossorigin="anonymous">
+        import * as SpiceHtml5 from './main.js';
+
+        // Исправленная и проверенная функция извлечения параметров из URL
+        function getUrlVar(name, defaultValue) {
+            var match = RegExp('[?&]' + name + '=([^&]*)').exec(window.location.search);
+            return match ? decodeURIComponent(match[1].replace(/\+/g, ' ')) : defaultValue;
+        }
+
+        function connect() {
+            var host = window.location.hostname;
+            var port = window.location.port || (window.location.protocol === 'https:' ? 443 : 80);
+            var scheme = window.location.protocol === 'https:' ? "wss://" : "ws://";
+            var token = getUrlVar('token', '');
+            var title = getUrlVar('title', 'Виртуальная машина');
+
+            if (title) {
+                document.title = title;
+            }
+
+            // Формируем чистый фабричный путь для WebSocket
+            var uri = scheme + host + ":" + port + "/websockify";
+            if (token) {
+                uri += "?token=" + token;
+            }
+
+            try {
+                // Инициализируем прямое подключение к Go-шлюзу
+                var sc = new SpiceHtml5.SpiceMainConn({
+                    uri: uri, 
+                    screen_id: "spice-screen", 
+                    password: getUrlVar('password', ''), 
+                    onerror: function(e) { console.log("SPICE Error:", e); }, 
+                    onagent: function() {
+                        // Активируем авто-ресайз библиотеки при успешном коннекте
+                        window.addEventListener('resize', SpiceHtml5.handle_resize);
+                        SpiceHtml5.resize_helper(this);
+                    }
+                });
+
+                // === МОДУЛЬНЫЙ DRAG AND DROP ===
+                window.addEventListener('dragover', function(e) { e.preventDefault(); });
+                
+                window.addEventListener('drop', function(e) {
+                    e.preventDefault();
+                    if (e.dataTransfer && e.dataTransfer.files.length > 0) {
+                        for (var i = 0; i < e.dataTransfer.files.length; i++) {
+                            // Вызываем нативный метод отправки у объекта сессии
+                            if (sc && typeof sc.send_file === 'function') {
+                                sc.send_file(e.dataTransfer.files[i]);
+                            }
+                        }
+                    }
+                });
+                // ================================
+
+            } catch (e) {
+                console.error("Connection failed:", e.toString());
+            }
+        }
+
+        // Запуск сессии
+        connect();
+
+        // Доводчик: пинаем ресайз при смене разрешения в GRUB/БИОС виртуалки
+        setInterval(function() {
+            window.dispatchEvent(new Event('resize'));
+        }, 200);
+    </script>
+</head>
+<body>
+    <div id="spice-area">
+        <div id="spice-screen" class="spice-screen"></div>
+    </div>
+</body>
+</html>
+

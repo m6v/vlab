@@ -1,6 +1,9 @@
 #!/bin/bash
 
-CONFIG_DIR="$HOME/.local/share/qemu"
+CONFIG_DIR="/srv/qemu/config"
+LOG_FILE="/tmp/vmctrl.log"
+
+echo "$(date '+%Y-%m-%d %H:%M:%S') $0 $*" >> $LOG_FILE
 
 if [ -z "$1" ] || [ -z "$2" ]; then
     echo "Использование: $0 <start|stop> <имя_машины>" >&2
@@ -16,11 +19,15 @@ if [ ! -f "$CONF_FILE" ]; then
     exit 1
 fi
 
+# Определение пользователя запустившего графический сеанс, чтобы скрипт работал при запуске от root
+USER=$(ps aux | grep '[d]bus-daemon --session' | awk 'NR==1 {print $1}')
+export HOME=/home/$USER
+
 # Подготовка чистого конфига с раскрытыми переменными для парсинга и запуска
 CLEAN_CONF=$(envsubst '$HOME,$VM_NAME' < "$CONF_FILE")
 
 # Определение номера порта с учетом базы 5900 и номера дисплея, задаваемого в конфиге
-VNC_ADDR=$(echo "$CLEAN_CONF" | awk -F'[: ,]' '$1=="-vnc" {print ($2=="0.0.0.0" ? "127.0.0.1" : $2) ":" (5900+$3)}')
+VNC_ADDR=$(echo "$CLEAN_CONF" | awk -F'[: ,]' '$1=="-spice" {print ($2=="0.0.0.0" ? "127.0.0.1" : $2) ":" (5900+$3)}')
 
 case "$ACTION" in
     start)
@@ -34,7 +41,8 @@ case "$ACTION" in
 
         # Отключение поиска шины доступности AT-SPI в D-Bus
         export NO_AT_BRIDGE=1
-        remote-viewer "vnc://$VNC_ADDR" >/dev/null 2>&1 &
+        echo "spice://$VNC_ADDR"
+        # remote-viewer "spice://$VNC_ADDR" >/dev/null 2>&1 &
         ;;
 
     stop)
@@ -47,6 +55,10 @@ case "$ACTION" in
         fi
         ;;
 
+    kill)
+        # Принудительное завершение процесса виртуальной машины
+        kill $(pgrep -f "qemu-system-x86_64.*-name ${VM_NAME}\b")
+        ;;
     *)
         echo "Ошибка: Неизвестное действие '$ACTION'." >&2
         exit 1

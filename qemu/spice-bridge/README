@@ -1,0 +1,42 @@
+# Веб-доступ по протоколу spice
+
+> После многочисленных попыток использования novnc принято решение о переходе на протокол spice
+
+Монолитный легковесный сетевой шлюз (gateway) и прокси-сервер, для организации удаленного доступа к графическим консолям виртуальных машин под управлением гипервизора QEMU/KVM по протоколу SPICE через веб-браузер
+```
+go mod init spice-bridge
+go get github.com/gorilla/websocket
+go build -o spice-bridge main.go
+```
+
+Установка  spice-html5
+```
+apt install spice-html5 || git clone https://gitlab.freedesktop.org/spice/spice-html5.git
+```
+
+В конфиге виртуальных машин заменить видео на
+```
+-vga virtio
+-spice port=5913,addr=127.0.0.1,disable-ticketing=on
+```
+
+Скопировать файлы в каталог spice-html5
+```
+cp launcher.html vmconsole /usr/share/spice-html5
+```
+
+Запуск моста
+```
+spice-bridge --web=/usr/share/spice-html5 --listen=:8089
+```
+
+URI для доступа
+```
+http://127.0.0.1:8089/vmconsole.html?host=127.0.0.1&port=8089&token=arm-abi&title=arm-abi
+```
+
+Доступ через консольный клиент
+```
+remote-viewer spice://127.0.0.1:5913
+```
+> Одновременный доступ через веб- и консольный клиент не поддерживается

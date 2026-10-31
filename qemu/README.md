@@ -1,23 +1,28 @@
 # Создание скелета
 ```
-mkdir -p /etc/skel/.local/share/qemu/images
 
-# /etc/skel/.local/share/qemu - конфиги виртуальных машин
 # /etc/skel/Desktop - ярлыки запуска виртуальных машин
 
-cd /etc/skel/.local/share/qemu/images
-# Создание пустых дисков
-qemu-img create -f qcow2 arm-abi.qcow2 16G
-qemu-img create -f qcow2 srv-szi.qcow2 32G
-qemu-img create -f qcow2 backup.qcow2 32G
+SKEL_POOL=/etc/skel/.local/share/qemu/images
+mkdir -p $SKEL_POOL
 
-POOL=/var/lib/libvirt/images
+# Создание пустых дисков
+qemu-img create -f qcow2 $SKEL_POOL/arm-abi.qcow2 16G
+qemu-img create -f qcow2 $SKEL_POOL/srv-szi.qcow2 32G
+qemu-img create -f qcow2 $SKEL_POOL/backup.qcow2 32G
+
+SYSTEM_POOL=/var/lib/libvirt/images
 # Создание оверлейных дисков
-qemu-img create -f qcow2 -F qcow2 -b $POOL/arm-ipc.qcow2 arm-ipc.qcow2
-qemu-img create -f qcow2 -F qcow2 -b $POOL/arm-o.qcow2 arm-o.qcow2
-qemu-img create -f qcow2 -F qcow2 -b $POOL/ipc-master.qcow2 ipc-master.qcow2
-qemu-img create -f qcow2 -F qcow2 -b $POOL/ipc-slave.qcow2 ipc-slave.qcow2
-qemu-img create -f qcow2 -F qcow2 -b $POOL/rubicon.qcow2 rubicon.qcow2
+qemu-img create -f qcow2 -F qcow2 -b $SYSTEM_POOL/arm-ipc.qcow2 $SKEL_POOL/arm-ipc.qcow2
+qemu-img create -f qcow2 -F qcow2 -b $SYSTEM_POOL/arm-o.qcow2 $SKEL_POOL/arm-o.qcow2
+qemu-img create -f qcow2 -F qcow2 -b $SYSTEM_POOL/ipc-master.qcow2 $SKEL_POOL/ipc-master.qcow2
+qemu-img create -f qcow2 -F qcow2 -b $SYSTEM_POOL/ipc-slave.qcow2 $SKEL_POOL/ipc-slave.qcow2
+qemu-img create -f qcow2 -F qcow2 -b $SYSTEM_POOL/rubicon.qcow2 $SKEL_POOL/rubicon.qcow2
+```
+
+Если скелет нужно применить к уже существующему пользователю, в сессии пользователя используют команду
+```
+sudo rsync -av --ignore-existing /etc/skel/ /home/$USER/ && sudo chown -R $USER:$USER /home/$USER/
 ```
 
 # Копирование скрипта управления
@@ -54,4 +59,12 @@ EOF
 chmod 0644 /etc/qemu/bridge.conf
 ```
 
-Упаковать все в deb-пакет и отказаться от ansible
+# Структура каталогов
+```
+/srv
+  /qemu
+    /config # шаблоны конфигурационных файлов виртуальных машин
+    /images # базовые qcow2-образы и iso-образы Astra Linux
+    /usr/share/spice-html5 # Spice Javascript client
+/usr/local/bin/vmctrl # Программа управления виртуальными машинами
+```
