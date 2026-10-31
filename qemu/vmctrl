@@ -26,8 +26,12 @@ export HOME=/home/$USER
 # Подготовка чистого конфига с раскрытыми переменными для парсинга и запуска
 CLEAN_CONF=$(envsubst '$HOME,$VM_NAME' < "$CONF_FILE")
 
-# Определение номера порта с учетом базы 5900 и номера дисплея, задаваемого в конфиге
-VNC_ADDR=$(echo "$CLEAN_CONF" | awk -F'[: ,]' '$1=="-spice" {print ($2=="0.0.0.0" ? "127.0.0.1" : $2) ":" (5900+$3)}')
+# Поиск подстроки -spice, взятие всего до ближайшего дефиса в круглые скобки (группу)
+if [[ "$CLEAN_CONF" =~ -spice[[:space:]]+([^-]+) ]]; then
+    eval "declare $(echo "${BASH_REMATCH[1]}" | tr ',' ' ')"
+fi
+# Адрес и порт сервера SPICE, задаваемого в конфиге
+VNC_ADDR="${addr}:${port}"
 
 case "$ACTION" in
     start)
@@ -41,8 +45,7 @@ case "$ACTION" in
 
         # Отключение поиска шины доступности AT-SPI в D-Bus
         export NO_AT_BRIDGE=1
-        echo "spice://$VNC_ADDR"
-        # remote-viewer "spice://$VNC_ADDR" >/dev/null 2>&1 &
+        remote-viewer "spice://$VNC_ADDR" >/dev/null 2>&1 &
         ;;
 
     stop)

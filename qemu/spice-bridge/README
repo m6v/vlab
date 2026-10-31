@@ -14,6 +14,12 @@ go build -o spice-bridge main.go
 apt install spice-html5 || git clone https://gitlab.freedesktop.org/spice/spice-html5.git
 ```
 
+
+curl -O https://gitlab.freedesktop.org/spice/spice-html5/-/archive/master/spice-html5-master.tar.gz
+tar -xzf spice-html5-master.tar.gz
+mv  spice-html5-master  spice-html5
+
+
 В конфиге виртуальных машин заменить видео на
 ```
 -vga virtio
