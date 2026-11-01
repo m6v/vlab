@@ -34,12 +34,14 @@ cp launcher.html vmconsole /usr/share/spice-html5
 Запуск моста
 ```
 spice-bridge --web=/usr/share/spice-html5 --listen=:8089
+spice-bridge --web=/usr/share/spice-html5 --token-source=/etc/websockify.tokens 8089
 ```
 
 URI для доступа
 ```
-http://127.0.0.1:8089/vmconsole.html?host=127.0.0.1&port=8089&token=arm-abi&title=arm-abi
+http://127.0.0.1:8089/vmconsole.html?token=arm-abi&title=arm-abi
 ```
+> Параметр title опциональный, при отсутствии используется обязательный параметр token
 
 Доступ через консольный клиент
 ```

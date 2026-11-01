@@ -3,127 +3,135 @@
 <head>
     <title>Консоль ВМ</title>
     <meta charset="utf-8">
+    <link rel="icon" href="data:,">
     <style>
-        /* Полное обнуление полей и фиксация фона */
         html, body {
-            margin: 0 !important;
-            padding: 0 !important;
-            width: 100% !important;
-            height: 100% !important;
-            background-color: #111 !important;
-            overflow: hidden !important;
+            margin: 0 !important; padding: 0 !important;
+            width: 100% !important; height: 100% !important;
+            background-color: #111 !important; overflow: hidden !important;
+            font-family: sans-serif;
         }
-
-        /* Центрируем контейнер экрана строго по границам вкладки */
         #spice-area {
-            width: 100vw !important;
-            height: 100vh !important;
-            margin: 0 !important;
-            padding: 0 !important;
-            overflow: hidden !important;
-            display: flex !important;
-            justify-content: center !important;
-            align-items: center !important;
+            width: 100vw !important; height: 100vh !important;
+            margin: 0 !important; padding: 0 !important; overflow: hidden !important;
+            display: flex !important; justify-content: center !important; align-items: center !important;
             position: relative !important;
         }
-
         #spice-screen {
-            width: 100% !important;
-            height: 100% !important;
-            display: flex !important;
-            justify-content: center !important;
-            align-items: center !important;
-            margin: 0 !important;
-            padding: 0 !important;
+            width: 100% !important; height: 100% !important;
+            display: flex !important; justify-content: center !important; align-items: center !important;
+            margin: 0 !important; padding: 0 !important;
         }
-
-        /* Аппаратное масштабирование динамического Canvas с сохранением пропорций */
         #spice-screen canvas {
-            width: 100vw !important;
-            height: 100vh !important;
-            object-fit: contain !important; 
-            margin: 0 !important;
-            padding: 0 !important;
-            position: absolute !important;
-            top: 50% !important;
-            left: 50% !important;
+            width: 100vw !important; height: 100vh !important;
+            object-fit: contain !important; margin: 0 !important; padding: 0 !important;
+            position: absolute !important; top: 50% !important; left: 50% !important;
             transform: translate(-50%, -50%) !important;
         }
+        iframe {
+            width: 100%; height: 100%; border: none; background: #111;
+            position: absolute; top: 0; left: 0; z-index: 99999; display: none;
+        }
+        .error-panel {
+            position: absolute !important; top: 50% !important; left: 50% !important;
+            transform: translate(-50%, -50%) !important; text-align: center; 
+            background: #1e1e1e; padding: 40px 50px; border-radius: 12px; 
+            border: 1px solid #7a1a1a; box-shadow: 0 8px 32px rgba(0,0,0,0.5); 
+            z-index: 999999; display: none; min-width: 320px;
+        }
+        .error-title { color: #ff4444; font-size: 22px; font-weight: 600; margin-bottom: 15px; }
+        .error-text { color: #bbb; font-size: 14px; line-height: 1.5; }
     </style>
 
-    <!-- Загружаем ядро SPICE как современный ES6-модуль -->
     <script type="module" crossorigin="anonymous">
         import * as SpiceHtml5 from './main.js';
 
-        // Исправленная и проверенная функция извлечения параметров из URL
-        function getUrlVar(name, defaultValue) {
-            var match = RegExp('[?&]' + name + '=([^&]*)').exec(window.location.search);
-            return match ? decodeURIComponent(match[1].replace(/\+/g, ' ')) : defaultValue;
-        }
+        function checkAndConnect() {
+            var urlParams = new URLSearchParams(window.location.search);
+            var token = urlParams.get('token') || '';
+            var title = urlParams.get('title') || token || 'Виртуальная машина';
+            var password = urlParams.get('password') || '';
 
-        function connect() {
+            document.title = title;
+
+            // Если токен пуст — мгновенно блокируем выполнение и выводим ошибку
+            if (!token || token.trim() === "") {
+                showCriticalError("Ошибка инициализации сессии", "В адресной слоке URI не указан обязательный параметр ?token=имя_машины");
+                return;
+            }
+
             var host = window.location.hostname;
             var port = window.location.port || (window.location.protocol === 'https:' ? 443 : 80);
             var scheme = window.location.protocol === 'https:' ? "wss://" : "ws://";
-            var token = getUrlVar('token', '');
-            var title = getUrlVar('title', 'Виртуальная машина');
+            var uri = scheme + host + ":" + port + "/ws?token=" + token;
 
-            if (title) {
-                document.title = title;
+            // Запускаем подключение напрямую. Логика отсечки выключенной машины теперь внутри onerror
+            initSpice(uri, password);
+        }
+
+        function showCriticalError(errTitle, errText) {
+            document.getElementById('err-title').innerText = errTitle;
+            document.getElementById('err-text').innerText = errText;
+            document.getElementById('error-overlay').style.display = 'block';
+        }
+
+        function showLauncher() {
+            var iframe = document.getElementById('launcher-frame');
+            if (iframe && iframe.style.display !== "block") {
+                var search = window.location.search;
+                if (!search.includes("title=")) {
+                    search += (search ? "&" : "?") + "title=" + encodeURIComponent(document.title);
+                }
+                iframe.src = "/launcher.html" + search;
+                iframe.style.display = "block";
             }
+        }
 
-            // Формируем чистый фабричный путь для WebSocket
-            var uri = scheme + host + ":" + port + "/websockify";
-            if (token) {
-                uri += "?token=" + token;
-            }
-
+        function initSpice(uri, password) {
             try {
-                // Инициализируем прямое подключение к Go-шлюзу
-                var sc = new SpiceHtml5.SpiceMainConn({
+                new SpiceHtml5.SpiceMainConn({
                     uri: uri, 
                     screen_id: "spice-screen", 
-                    password: getUrlVar('password', ''), 
-                    onerror: function(e) { console.log("SPICE Error:", e); }, 
+                    password: password, 
+                    // ИСПРАВЛЕНО: Если порт закрыт или упал — библиотека сама бесшумно выведет нашу кнопку лаунчера
+                    onerror: function(e) { 
+                        console.log("SPICE Connection state: offline or closed");
+                        showLauncher();
+                    }, 
                     onagent: function() {
-                        // Активируем авто-ресайз библиотеки при успешном коннекте
                         window.addEventListener('resize', SpiceHtml5.handle_resize);
                         SpiceHtml5.resize_helper(this);
                     }
                 });
 
-                // === МОДУЛЬНЫЙ DRAG AND DROP ===
                 window.addEventListener('dragover', function(e) { e.preventDefault(); });
-                
                 window.addEventListener('drop', function(e) {
                     e.preventDefault();
                     if (e.dataTransfer && e.dataTransfer.files.length > 0) {
                         for (var i = 0; i < e.dataTransfer.files.length; i++) {
-                            // Вызываем нативный метод отправки у объекта сессии
-                            if (sc && typeof sc.send_file === 'function') {
-                                sc.send_file(e.dataTransfer.files[i]);
+                            if (this && typeof this.send_file === 'function') {
+                                this.send_file(e.dataTransfer.files[i]);
                             }
                         }
                     }
                 });
-                // ================================
-
             } catch (e) {
-                console.error("Connection failed:", e.toString());
+                showLauncher();
             }
         }
 
-        // Запуск сессии
-        connect();
-
-        // Доводчик: пинаем ресайз при смене разрешения в GRUB/БИОС виртуалки
-        setInterval(function() {
-            window.dispatchEvent(new Event('resize'));
-        }, 200);
+        checkAndConnect();
+        setInterval(function() { window.dispatchEvent(new Event('resize')); }, 200);
     </script>
 </head>
 <body>
     <div id="spice-area">
+        <div id="error-overlay" class="error-panel">
+            <div id="err-title" class="error-title">Критическая ошибка</div>
+            <div id="err-text" class="error-text">Параметры сессии повреждены или отсутствуют.</div>
+        </div>
+
+        <iframe id="launcher-frame"></iframe>
         <div id="spice-screen" class="spice-screen"></div>
     </div>
 </body>

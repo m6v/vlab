@@ -2,7 +2,9 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>{{.Title}}</title>
+    <!-- Заголовок окна браузера, будет динамически меняться из JS -->
+    <title>Загрузка...</title>
+    <link rel="icon" href="data:,">
     <style>
         html, body { 
             margin: 0; padding: 0; width: 100%; height: 100%; 
@@ -10,12 +12,17 @@
             align-items: center; font-family: sans-serif; 
         }
         .panel { 
-            text-align: center; background: #1e1e1e; padding: 40px 60px; 
+            text-align: center; background: #1e1e1e; padding: 50px 60px; 
             border-radius: 12px; border: 1px solid #333; 
             box-shadow: 0 8px 32px rgba(0,0,0,0.5); 
         }
-        h1 { color: #fff; font-size: 24px; margin-bottom: 10px; font-weight: 500; }
-        p { color: #888; font-size: 14px; margin-bottom: 25px; }
+        /* Укрупненный шрифт для единственной строки состояния */
+        .status-message { 
+            color: #fff; 
+            font-size: 22px; 
+            font-weight: 500;
+            margin-bottom: 30px; 
+        }
         .btn { 
             background: #238636; color: white; border: none; 
             padding: 14px 32px; font-size: 16px; font-weight: 600; 
@@ -33,23 +40,40 @@
 </head>
 <body>
     <div class="panel">
-        <h1>{{.Title}}</h1>
-        <p id="txt">Консоль отключена. Машина находится в выключенном состоянии.</p>
-        <button class="btn" id="btn" onclick="startVM()">Включить ВМ</button>
+        <!-- Оставлена только одна строка состояния с увеличенным шрифтом -->
+        <div id="txt" class="status-message">Загрузка...</div>
+        <button class="btn" id="btn" onclick="startVM()">Включить</button>
         <div id="loader" class="spinner"></div>
     </div>
 
     <script>
+        var urlParams = new URLSearchParams(window.location.search);
+        var token = urlParams.get('token') || 'vm';
+        var title = urlParams.get('title') || token;
+        
+        // Переносим название машины (arm-abi) строго в заголовок окна браузера
+        document.title = title;
+        
+        // Выводим единственную крупную строку по вашему ТЗ
+        document.getElementById('txt').innerText = "Виртуальная машина " + title + " выключена";
+
         function startVM() {
             document.getElementById('btn').style.display = 'none';
             document.getElementById('loader').style.display = 'block';
-            document.getElementById('txt').innerText = 'Отправка команды на запуск QEMU и ожидание загрузки...';
+            document.getElementById('txt').innerText = 'Отправка команды на запуск QEMU...';
             
-            fetch('/start?vm={{.Token}}')
+            fetch('http://127.0.0' + token)
                 .then(() => {
+                    document.getElementById('txt').innerText = 'Ожидание инициализации видеокарты...';
                     setInterval(() => window.location.reload(), 2000);
+                })
+                .catch(err => {
+                    document.getElementById('txt').innerText = 'Ошибка связи с управляющим демоном.';
+                    document.getElementById('btn').style.display = 'inline-block';
+                    document.getElementById('loader').style.none = 'none';
                 });
         }
     </script>
 </body>
 </html>
+
