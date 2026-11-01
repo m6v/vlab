@@ -1,49 +1,62 @@
 package main
 
 import (
+	"bufio"
 	"log"
-	"net/http"
+	"net"
 	"os"
 	"os/exec"
+	"strings"
 )
 
 const (
-	listenAddr = ":8085"
+	socketPath = "/tmp/vmctrl.sock"
 	vmctrlPath = "/usr/local/bin/vmctrl"
 )
 
 func main() {
-	http.HandleFunc("/start", func(w http.ResponseWriter, r *http.Request) {
-		// Разрешаем кросс-доменные запросы от фронтенда (CORS)
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET")
+	_ = os.Remove(socketPath)
 
-		vmName := r.URL.Query().Get("vm")
-		if vmName == "" {
-			http.Error(w, "ERROR: Missing VM name", http.StatusBadRequest)
-			return
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		log.Fatalf("FATAL: Не удалось создать Unix-сокет: %v", err)
+	}
+	defer listener.Close()
+
+	_ = os.Chmod(socketPath, 0666)
+
+	log.Printf("INFO: Administrative vmctrl-daemon successfully started on unix://%s", socketPath)
+
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			continue
 		}
 
-		log.Printf("EXEC: Activating system launcher for target VM: %s", vmName)
+		go func(c net.Conn) {
+			defer c.Close()
+			scanner := bufio.NewScanner(c)
+			if scanner.Scan() {
+				vmName := strings.TrimSpace(scanner.Text())
+				if vmName == "" {
+					return
+				}
 
-		// Вызываем ваш админский Bash-инструмент управления QEMU
-		cmd := exec.Command(vmctrlPath, "start", vmName)
-		
-		// Передаем системные пути, чтобы vmctrl внутри себя видел envsubst и qemu
-		cmd.Env = append(os.Environ(), "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
-		
-		if err := cmd.Run(); err != nil {
-			log.Printf("ERROR: System launcher execution failed: %v", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+				log.Printf("EXEC: Processing console boot signal for target: %s", vmName)
 
-		log.Printf("SUCCESS: VM %s initialized and started successfully", vmName)
-		w.Write([]byte("OK"))
-	})
-
-	log.Printf("INFO: Administrative vmctrl-daemon successfully started on %s", listenAddr)
-	if err := http.ListenAndServe(listenAddr, nil); err != nil {
-		log.Fatalf("FATAL: Daemon crashed: %v", err)
+				cmd := exec.Command(vmctrlPath, "start", vmName)
+				
+				cmd.Stdout = os.Stdout
+				cmd.Stderr = os.Stderr
+				
+				cmd.Env = append(os.Environ(), "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+				
+				if err := cmd.Run(); err != nil {
+					log.Printf("ERROR: Script exec failed: %v", err)
+				} else {
+					log.Printf("SUCCESS: Script completed boot routine for %s", vmName)
+				}
+			}
+		}(conn)
 	}
 }

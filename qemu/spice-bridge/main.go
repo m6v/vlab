@@ -5,6 +5,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+    "io"
 	"log"
 	"net"
 	"net/http"
@@ -20,33 +21,31 @@ var (
 	tokenRegexp = regexp.MustCompile(`^([a-zA-Z0-9_-]+):\s*([0-9.]+):(\d+)`)
 )
 
-const bufferSize = 65536
+const (
+	bufferSize  = 65536
+	logFileName = "spice-bridge.log"
+	daemonSock  = "/tmp/vmctrl.sock"
+)
 
 var tokensPath string
 
 func main() {
-	// Справка в строгом стиле websockify
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Использование: %s --token-source=ФАЙЛ [АДРЕС:]ПОРТ\n\nOptions:\n", os.Args)
 		flag.PrintDefaults()
 	}
 
-	// УСТАНОВЛЕН ДЕФОЛТНЫЙ ПУТЬ: /usr/share/spice-html5 подставляется автоматически
-	webRoot := flag.String("web", "/usr/share/spice-html5", "Путь к паристому каталогу веб-интерфейса (web root)")
+	webRoot := flag.String("web", "/usr/share/spice-html5", "Путь к папке веб-интерфейса (web root)")
 	flag.StringVar(&tokensPath, "token-source", "", "Путь к файлу сопоставления токенов (базе портов)")
 	flag.Parse()
 
 	if tokensPath == "" {
-		log.Println("ERROR: Не указан обязательный параметр --token-source")
-		flag.Usage()
-		os.Exit(1)
+		log.Fatal("ERROR: Не указан обязательный параметр --token-source")
 	}
 
 	args := flag.Args()
 	if len(args) < 1 {
-		log.Println("ERROR: Не указан сетевой порт для прослушивания")
-		flag.Usage()
-		os.Exit(1)
+		log.Fatal("ERROR: Не указан сетевой порт для прослушивания")
 	}
 
 	listenAddr := args[0]
@@ -54,22 +53,57 @@ func main() {
 		listenAddr = ":" + listenAddr
 	}
 
+	var logPath string
+	if os.Getuid() == 0 {
+		logPath = "/var/log/" + logFileName
+	} else {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			logPath = logFileName
+		} else {
+			logPath = homeDir + "/" + logFileName
+		}
+	}
+
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		log.Printf("WARNING: Logging to stdout only: %v", err)
+	} else {
+		defer logFile.Close()
+		log.SetOutput(io.MultiWriter(os.Stdout, logFile))
+	}
+
 	log.Printf("INFO: Pure Go websockify alternative starting on %s", listenAddr)
 	log.Printf("INFO: Website root directory: %s", *webRoot)
 	log.Printf("INFO: Tokens database loaded from: %s", tokensPath)
 
-	// Статический веб-сервер раздает файлы из папки
 	http.Handle("/", http.FileServer(http.Dir(*webRoot)))
-	
-	// Точка входа для бинарного WebSocket-пайпа
 	http.HandleFunc("/ws", handleWebSocketProxy)
+
+	http.HandleFunc("/start", func(w http.ResponseWriter, r *http.Request) {
+		vmName := r.URL.Query().Get("vm")
+		if vmName == "" {
+			http.Error(w, "Missing VM name", http.StatusBadRequest)
+			return
+		}
+
+		conn, err := net.Dial("unix", daemonSock)
+		if err != nil {
+			log.Printf("ERROR: Background vmctrl-daemon is offline: %v", err)
+			http.Error(w, "Управляющий демон недоступен", http.StatusInternalServerError)
+			return
+		}
+		defer conn.Close()
+
+		fmt.Fprintf(conn, "%s\n", vmName)
+		w.Write([]byte("OK"))
+	})
 
 	if err := http.ListenAndServe(listenAddr, nil); err != nil {
 		log.Fatalf("FATAL: Server crashed: %v", err)
 	}
 }
 
-// Извлекатель адреса из файла токенов
 func getTargetAddr(token string) (string, error) {
 	file, err := os.Open(tokensPath)
 	if err != nil {
@@ -93,7 +127,6 @@ func getTargetAddr(token string) (string, error) {
 	return "", fmt.Errorf("token '%s' not found in database", token)
 }
 
-// Бинарный мост WebSocket <-> TCP Network Stream
 func handleWebSocketProxy(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
 	if token == "" {
@@ -102,23 +135,28 @@ func handleWebSocketProxy(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("DEBUG: Incoming WebSocket connection for token: '%s'", token)
 
+	if token == "" {
+		log.Printf("ERROR: Authentication failed. Token parameters missing.")
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+
 	targetAddr, err := getTargetAddr(token)
 	if err != nil {
-		log.Printf("ERROR: Authentication failed: %v", err)
-		http.Error(w, "Unauthorized token", http.StatusUnauthorized)
+		log.Printf("ERROR: Authentication failed for token '%s': %v", token, err)
+		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
 
 	wsConn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("ERROR: WebSocket upgrade failed: %v", err)
 		return
 	}
 	defer wsConn.Close()
 
-	tcpConn, err := net.DialTimeout("tcp", targetAddr, 2*time.Second)
+	tcpConn, err := net.DialTimeout("tcp", targetAddr, 1*time.Second)
 	if err != nil {
-		log.Printf("ERROR: Target net stream %s is unreachable: %v", targetAddr, err)
+		log.Printf("ERROR: Target stream %s unreachable: %v", targetAddr, err)
 		wsConn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(1011, "Target unreachable"))
 		return
 	}
@@ -129,7 +167,6 @@ func handleWebSocketProxy(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Поток А: Браузер -> Целевой TCP-порт
 	go func() {
 		defer cancel()
 		for {
@@ -150,7 +187,6 @@ func handleWebSocketProxy(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// Поток Б: Целевой TCP-порт -> Браузер
 	buffer := make([]byte, bufferSize)
 	for {
 		select {
