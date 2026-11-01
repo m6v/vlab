@@ -31,11 +31,13 @@ mv  spice-html5-master  spice-html5
 cp launcher.html vmconsole /usr/share/spice-html5
 ```
 
-Запуск моста
+Синтаксис запуска `spice-bridge` полностью повторяет логику оригинальной утилиты `websockify` от RedHat. Порт прослушивания задается строго как последний свободный позиционный аргумент, например,
 ```
-spice-bridge --web=/usr/share/spice-html5 --listen=:8089
 spice-bridge --web=/usr/share/spice-html5 --token-source=/etc/websockify.tokens 8089
 ```
+Доступные параметры:
+`--token-source=ФАЙЛ` — путь к текстовому файлу базы портов (обязательный параметр).
+`--web=КАТАЛОГ` — путь к папке статики интерфейса (по умолчанию автоматически подставляется фабричный путь `/usr/share/spice-html5`).
 
 URI для доступа
 ```
