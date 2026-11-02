@@ -6,7 +6,7 @@ LOG_FILE="/tmp/vmctrl.log"
 echo "$(date '+%Y-%m-%d %H:%M:%S') $0 $*" >> $LOG_FILE
 
 if [ -z "$1" ] || [ -z "$2" ]; then
-    echo "Использование: $0 <start|stop> <имя_машины>" >&2
+    echo "Использование: $0 <start|stop|kill> <имя_машины>" >&2
     exit 1
 fi
 
@@ -19,11 +19,11 @@ if [ ! -f "$CONF_FILE" ]; then
     exit 1
 fi
 
-# Определение пользователя запустившего графический сеанс, чтобы скрипт работал при запуске от root
+# Определение пользователя, запустившего графический сеанс
 USER=$(ps aux | grep 'dbus-daemon --session' | awk 'NR==1 {print $1}')
 export HOME=/home/$USER
 
-# Подготовка чистого конфига с раскрытыми переменными для парсинга и запуска
+# Подготовка аргументов для qemu-system на основе конфигурационного файла
 VM_PARMS=$(envsubst '$HOME,$VM_NAME' < "$CONF_FILE")
 
 # Определение номера порта с учетом базы 5900 и номера дисплея
@@ -55,7 +55,6 @@ case "$ACTION" in
             remote-viewer "spice://$SPICE_ADDR" >/dev/null 2>&1 &
         fi
         ;;
-
     stop)
         # Штатное выключение через отправку команды в управляющий сокет
         if [ -S "/tmp/${VM_NAME}.sock" ]; then
@@ -65,7 +64,6 @@ case "$ACTION" in
             exit 1
         fi
         ;;
-
     kill)
         # Принудительное завершение процесса виртуальной машины
         kill $(pgrep -f "qemu-system-x86_64.*-name ${VM_NAME}\b")
