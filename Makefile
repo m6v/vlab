@@ -30,6 +30,7 @@ deb:
 	@echo "Выставление прав на исполнение для служебных файлов..."
 	chmod 755 $(PROJECT_DIR)/DEBIAN/control
 	@if [ -f $(PROJECT_DIR)/DEBIAN/postinst ]; then chmod 755 $(PROJECT_DIR)/DEBIAN/postinst; fi
+	@if [ -f $(PROJECT_DIR)/DEBIAN/postrm ]; then chmod 755 $(PROJECT_DIR)/DEBIAN/postrm; fi
 	@echo "Сборка пакета $(DEB_FILE)..."
 	dpkg-deb --root-owner-group --build $(PROJECT_DIR) $(DEB_FILE)
 	@echo "Пакет успешно создан: $(DEB_FILE)"

@@ -1,0 +1,24 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    purge|remove)
+        echo "Удаление сетевых мостов br0 и br1 через NetworkManager..."
+
+        # Удаление подключения по имени
+        nmcli connection delete br0 2>/dev/null || true
+        nmcli connection delete br1 2>/dev/null || true
+
+        echo "Мосты успешно удалены."
+        ;;
+
+    upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+        ;;
+
+    *)
+        echo "postrm вызван с неизвестным аргументом: \$1" >&2
+        exit 1
+        ;;
+esac
+
+exit 0
