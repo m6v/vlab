@@ -20,18 +20,21 @@ if [ ! -f "$CONF_FILE" ]; then
 fi
 
 # Определение пользователя запустившего графический сеанс, чтобы скрипт работал при запуске от root
-USER=$(ps aux | grep '[d]bus-daemon --session' | awk 'NR==1 {print $1}')
+USER=$(ps aux | grep 'dbus-daemon --session' | awk 'NR==1 {print $1}')
 export HOME=/home/$USER
 
 # Подготовка чистого конфига с раскрытыми переменными для парсинга и запуска
-CLEAN_CONF=$(envsubst '$HOME,$VM_NAME' < "$CONF_FILE")
+VM_PARMS=$(envsubst '$HOME,$VM_NAME' < "$CONF_FILE")
+
+# Определение номера порта с учетом базы 5900 и номера дисплея
+VNC_ADDR="127.0.0.1:$((5900 + $(echo "$VM_PARMS" | grep -Po '(?<=-vnc 0.0.0.0:)[0-9]+')))"
 
 # Поиск подстроки -spice, взятие всего до ближайшего дефиса в круглые скобки (группу)
-if [[ "$CLEAN_CONF" =~ -spice[[:space:]]+([^-]+) ]]; then
+if [[ "$VM_PARMS" =~ -spice[[:space:]]+([^-]+) ]]; then
     eval "declare $(echo "${BASH_REMATCH[1]}" | tr ',' ' ')"
 fi
-# Адрес и порт сервера SPICE, задаваемого в конфиге
-VNC_ADDR="${addr}:${port}"
+# Адрес и порт сервера SPICE
+SPICE_ADDR="${addr}:${port}"
 
 case "$ACTION" in
     start)
@@ -39,13 +42,18 @@ case "$ACTION" in
         if ! pgrep -f "qemu-system-x86_64.*-name ${VM_NAME}\b" > /dev/null; then
             rm -f "/tmp/${VM_NAME}.sock"
             # Склеивание строк конфига через пробел и запуск виртуальной машины
-            eval "qemu-system-x86_64 $(echo "$CLEAN_CONF" | paste -sd ' ' -)"
+            eval "qemu-system-x86_64 $(echo "$VM_PARMS" | paste -sd ' ' -)"
             sleep 1
         fi
 
         # Отключение поиска шины доступности AT-SPI в D-Bus
         export NO_AT_BRIDGE=1
-        remote-viewer "spice://$VNC_ADDR" >/dev/null 2>&1 &
+
+        if [ "$SPICE_ADDR" = ":" ]; then
+            remote-viewer "vnc://$VNC_ADDR" >/dev/null 2>&1 &
+        else
+            remote-viewer "spice://$SPICE_ADDR" >/dev/null 2>&1 &
+        fi
         ;;
 
     stop)
