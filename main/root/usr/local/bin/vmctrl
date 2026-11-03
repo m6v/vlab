@@ -5,58 +5,70 @@ LOG_FILE="/tmp/vmctrl.log"
 
 echo "$(date '+%Y-%m-%d %H:%M:%S') $0 $*" >> $LOG_FILE
 
-if [ -z "$1" ] || [ -z "$2" ]; then
-    echo "Использование: $0 <start|stop|kill> <имя_машины>" >&2
-    exit 1
-fi
-
 ACTION="$1"
-export VM_NAME="$2"
-CONF_FILE="${CONFIG_DIR}/${VM_NAME}.conf"
 
-if [ ! -f "$CONF_FILE" ]; then
-    echo "Ошибка: Файл конфигурации не найден." >&2
-    exit 1
+# Если действие не list, инициализируем и жестко проверяем параметры ВМ
+if [ "$ACTION" != "list" ]; then
+    # 1. Проверяем, передано ли имя машины
+    if [ -z "$2" ]; then
+        echo "Ошибка: Не указано имя виртуальной машины." >&2
+        echo "Использование: $0 <list|start|stop|kill> <имя_машины> или $0 list" >&2
+        exit 1
+    fi
+
+    export VM_NAME="$2"
+    CONF_FILE="${CONFIG_DIR}/${VM_NAME}.conf"
+
+    # 2. Проверяем физическое наличие файла конфигурации
+    if [ ! -f "$CONF_FILE" ]; then
+        echo "Ошибка: Файл конфигурации для '${VM_NAME}' не найден." >&2
+        exit 1
+    fi
+
+    # 3. Готовим окружение (выполняется только для команд управления)
+    USER=$(ps aux | grep 'dbus-daemon --session' | awk 'NR==1 {print $1}')
+    export HOME=/home/$USER
+
+    # Подготовка аргументов для qemu-system на основе конфигурационного файла
+    VM_PARMS=$(envsubst '$HOME,$VM_NAME' < "$CONF_FILE")
+
+    # Определение номера порта с учетом базы 5900 и номера дисплея
+    VNC_ADDR="127.0.0.1:$((5900 + $(echo "$VM_PARMS" | grep -Po '(?<=-vnc 0.0.0.0:)[0-9]+' || echo 0)))"
+
+    # Поиск подстроки -spice, взятие всего до ближайшего дефиса в круглые скобки
+    if [[ "$VM_PARMS" =~ -spice[[:space:]]+([^-]+) ]]; then
+        eval "declare $(echo "${BASH_REMATCH[1]}" | tr ',' ' ')"
+    fi
+    SPICE_ADDR="${addr}:${port}"
 fi
 
-# Определение пользователя, запустившего графический сеанс
-USER=$(ps aux | grep 'dbus-daemon --session' | awk 'NR==1 {print $1}')
-export HOME=/home/$USER
-
-# Подготовка аргументов для qemu-system на основе конфигурационного файла
-VM_PARMS=$(envsubst '$HOME,$VM_NAME' < "$CONF_FILE")
-
-# Определение номера порта с учетом базы 5900 и номера дисплея
-VNC_ADDR="127.0.0.1:$((5900 + $(echo "$VM_PARMS" | grep -Po '(?<=-vnc 0.0.0.0:)[0-9]+')))" 2>/dev/null
-
-# Поиск подстроки -spice, взятие всего до ближайшего дефиса в круглые скобки (группу)
-if [[ "$VM_PARMS" =~ -spice[[:space:]]+([^-]+) ]]; then
-    eval "declare $(echo "${BASH_REMATCH[1]}" | tr ',' ' ')"
-fi
-# Адрес и порт сервера SPICE
-SPICE_ADDR="${addr}:${port}"
-
+# Основной блок выполнения действий
 case "$ACTION" in
+    list)
+        # Находим PID процессов и объединяем их через запятую для утилиты ps
+        PIDS=$(pgrep -f "qemu-system-x86_64.*-name" | paste -sd ',' -)
+        if [ -n "$PIDS" ]; then
+            # Извлекаем имена и склеиваем их в одну строку через пробел
+            ps -p "$PIDS" -o args= | grep -Po '(?<=-name )[^\s\b]+' | paste -sd ' ' -
+        fi
+        ;;
+
     start)
-        # Если процесс запущен, предупредить удаление управляющего сокета и повторный запуск
         if ! pgrep -f "qemu-system-x86_64.*-name ${VM_NAME}\b" > /dev/null; then
             rm -f "/tmp/${VM_NAME}.sock"
-            # Склеивание строк конфига через пробел и запуск виртуальной машины
             eval "qemu-system-x86_64 $(echo "$VM_PARMS" | paste -sd ' ' -)"
             sleep 1
         fi
 
-        # Отключение поиска шины доступности AT-SPI в D-Bus
         export NO_AT_BRIDGE=1
-
         if [ "$SPICE_ADDR" = ":" ]; then
             remote-viewer "vnc://$VNC_ADDR" >/dev/null 2>&1 &
         else
             remote-viewer "spice://$SPICE_ADDR" >/dev/null 2>&1 &
         fi
         ;;
+
     stop)
-        # Штатное выключение через отправку команды в управляющий сокет
         if [ -S "/tmp/${VM_NAME}.sock" ]; then
             echo "system_powerdown" | nc -N -U "/tmp/${VM_NAME}.sock" >/dev/null
         else
@@ -64,12 +76,14 @@ case "$ACTION" in
             exit 1
         fi
         ;;
+
     kill)
-        # Принудительное завершение процесса виртуальной машины
         kill $(pgrep -f "qemu-system-x86_64.*-name ${VM_NAME}\b")
         ;;
+
     *)
         echo "Ошибка: Неизвестное действие '$ACTION'." >&2
+        echo "Использование: $0 <start|stop|kill> <имя_машины> или $0 list" >&2
         exit 1
         ;;
 esac

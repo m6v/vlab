@@ -1,0 +1,44 @@
+_vmctrl_completion() {
+    local cur prev opts
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+    # Главные команды
+    opts="start stop kill list"
+
+    # Если дополняем первое слово (саму команду)
+    if [[ ${COMP_CWORD} -eq 1 ]]; then
+        COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+        return 0
+    fi
+
+    # Если второе слово — дополняем именами машин в зависимости от контекста
+    if [[ ${COMP_CWORD} -eq 2 ]]; then
+        case "${prev}" in
+            start)
+                # Для start показываем все доступные конфиги
+                local config_dir="/srv/qemu/config"
+                if [ -d "$config_dir" ]; then
+                    local all_vms=$(find "$config_dir" -maxdepth 1 -name "*.conf" -exec basename {} .conf \;)
+                    COMPREPLY=( $(compgen -W "${all_vms}" -- "${cur}") )
+                fi
+                return 0
+                ;;
+            stop|kill)
+                # Для stop и kill показываем ТОЛЬКО запущенные в данный момент машины
+                local pids=$(pgrep -f "qemu-system-x86_64.*-name" | paste -sd ',' -)
+                if [ -n "$pids" ]; then
+                    local running_vms=$(ps -p "$pids" -o args= 2>/dev/null | grep -Po '(?<=-name )[^\s\b]+')
+                    COMPREPLY=( $(compgen -W "${running_vms}" -- "${cur}") )
+                fi
+                return 0
+                ;;
+            *)
+                ;;
+        esac
+    fi
+}
+
+# Привязка автодополнения к вызовам утилиты
+complete -F _vmctrl_completion vmctrl

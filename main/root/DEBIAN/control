@@ -1,6 +1,7 @@
 Package: vlab-main
 Maintainer: Sergey Maksimov <m6v@mail.ru>
 Architecture: all
+Depends: qemu-system-x86, qemu-utils, network-manager, virt-viewer
 Description: Установщик среды виртуализации УТК-СЗИ
-Version: 1.0.193
-Installed-Size: 380
+Version: 1.0.194
+Installed-Size: 392

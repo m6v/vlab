@@ -1,8 +1,8 @@
 Установку выполняют в следующем порядке
 - копируют в каталог /srv/qemu/images образы дисков виртуальных машин rubicon.qcow, arm-o.qcow2, arm-ipc.qcow2, ipc-master.qcow2, ips-slave.qcow2
-- устанавливают пакет `vlab-main_*.deb`
-- устанавливают зависимости
+- перед установкой желательно установить пакет virt-viewer без лишних зависимостей, иначе при установке пакета он потянет за собой libvirt и др.
 ```
-apt install qemu-system-x86 qemu-utils
 apt install virt-viewer --no-install-recommends --no-install-suggests
 ```
+- устанавливают пакет `vlab-main_*.deb`
+- копируют дистрибутивы средств защиты информации в каталог /srv/repo/

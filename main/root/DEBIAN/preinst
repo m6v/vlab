@@ -1,0 +1,30 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = "install" ] || [ "$1" = "upgrade" ]; then
+    echo "Проверка наличия обязательных образов виртуальных машин"
+
+    TARGET_DIR="/srv/qemu/images"
+    MISSING_FILES=""
+
+    # Список обязательных файлов
+    REQUIRED_FILES="arm-ipc.qcow2 arm-o.qcow2 ipc-master.qcow2 ipc-slave.qcow2 rubicon.qcow2 astra-1.7_x86-64.iso main_update-1.7.8.6-16.09.25_14.55.iso"
+
+    for file in $REQUIRED_FILES; do
+        if [ ! -f "$TARGET_DIR/$file" ]; then
+            MISSING_FILES="$MISSING_FILES $file"
+        fi
+    done
+
+    # Если список пропущенных файлов не пуст, прерываем установку
+    if [ -n "$MISSING_FILES" ]; then
+        echo "Ошибка. В каталоге $TARGET_DIR отсутствуют файлы:" >&2
+        for missing in $MISSING_FILES; do
+            echo "  - $missing" >&2
+        done
+        echo "Установка среды виртуализации УТК-СЗИ прервана." >&2
+        exit 1
+    fi
+fi
+
+exit 0
