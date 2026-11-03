@@ -4,8 +4,8 @@ _vmctrl_completion() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    # Главные команды
-    opts="start stop kill list"
+    # Список всех поддерживаемых команд
+    opts="start stop kill list pause resume info"
 
     # Если дополняем первое слово (саму команду)
     if [[ ${COMP_CWORD} -eq 1 ]]; then
@@ -16,8 +16,8 @@ _vmctrl_completion() {
     # Если второе слово — дополняем именами машин в зависимости от контекста
     if [[ ${COMP_CWORD} -eq 2 ]]; then
         case "${prev}" in
-            start)
-                # Для start показываем все доступные конфиги
+            start|info)
+                # Для start и info показываем ВСЕ доступные конфигурации из файлов *.conf
                 local config_dir="/srv/qemu/config"
                 if [ -d "$config_dir" ]; then
                     local all_vms=$(find "$config_dir" -maxdepth 1 -name "*.conf" -exec basename {} .conf \;)
@@ -25,12 +25,35 @@ _vmctrl_completion() {
                 fi
                 return 0
                 ;;
-            stop|kill)
-                # Для stop и kill показываем ТОЛЬКО запущенные в данный момент машины
+            stop|kill|pause)
+                # Для stop, kill и pause показываем ТОЛЬКО запущенные машины
                 local pids=$(pgrep -f "qemu-system-x86_64.*-name" | paste -sd ',' -)
                 if [ -n "$pids" ]; then
                     local running_vms=$(ps -p "$pids" -o args= 2>/dev/null | grep -Po '(?<=-name )[^\s\b]+')
                     COMPREPLY=( $(compgen -W "${running_vms}" -- "${cur}") )
+                fi
+                return 0
+                ;;
+            resume)
+                # Для resume показываем ТОЛЬКО те машины, которые сейчас на паузе (status: paused)
+                local pids=$(pgrep -f "qemu-system-x86_64.*-name" | paste -sd ',' -)
+                if [ -n "$pids" ]; then
+                    local running_vms=$(ps -p "$pids" -o args= 2>/dev/null | grep -Po '(?<=-name )[^\s\b]+')
+                    local paused_vms=""
+
+                    # Опрашиваем сокет каждой запущенной машины на предмет статуса "paused"
+                    for vm in $running_vms; do
+                        if [ -S "/tmp/${vm}.sock" ]; then
+                            # Команда "query-status" в QMP возвращает JSON, проверяем наличие "paused"
+                            if echo '{"execute":"query-status"}' | socat - UNIX-CONNECT:/tmp/${vm}.sock 2>/dev/null | grep -q '"status": "paused"'; then
+                                paused_vms="$paused_vms $vm"
+                            # Если используется обычный human-monitor (HMP), проверяем текстовый ответ "VM status: paused"
+                            elif echo "info status" | socat - UNIX-CONNECT:/tmp/${vm}.sock 2>/dev/null | grep -qi 'paused'; then
+                                paused_vms="$paused_vms $vm"
+                            fi
+                        fi
+                    done
+                    COMPREPLY=( $(compgen -W "${paused_vms}" -- "${cur}") )
                 fi
                 return 0
                 ;;

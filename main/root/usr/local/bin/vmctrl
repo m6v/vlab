@@ -12,7 +12,7 @@ if [ "$ACTION" != "list" ]; then
     # 1. Проверяем, передано ли имя машины
     if [ -z "$2" ]; then
         echo "Ошибка: Не указано имя виртуальной машины." >&2
-        echo "Использование: $0 <list|start|stop|kill> <имя_машины> или $0 list" >&2
+        echo "Использование: $0 <list|info|start|stop|pause|resume|kill> <имя_машины> или $0 list" >&2
         exit 1
     fi
 
@@ -53,6 +53,11 @@ case "$ACTION" in
         fi
         ;;
 
+    info)
+        # Просто выводим очищенную и склеенную в одну строку конфигурацию машины
+        echo "$VM_PARMS" | paste -sd ' ' -
+        ;;
+
     start)
         if ! pgrep -f "qemu-system-x86_64.*-name ${VM_NAME}\b" > /dev/null; then
             rm -f "/tmp/${VM_NAME}.sock"
@@ -62,15 +67,35 @@ case "$ACTION" in
 
         export NO_AT_BRIDGE=1
         if [ "$SPICE_ADDR" = ":" ]; then
-            remote-viewer "vnc://$VNC_ADDR" >/dev/null 2>&1 &
+            remote-viewer --hotkeys="release-cursor=shift+f12" "vnc://$VNC_ADDR" >/dev/null 2>&1 &
         else
-            remote-viewer "spice://$SPICE_ADDR" >/dev/null 2>&1 &
+            remote-viewer --hotkeys="release-cursor=shift+f12" "spice://$SPICE_ADDR" >/dev/null 2>&1 &
         fi
         ;;
 
     stop)
         if [ -S "/tmp/${VM_NAME}.sock" ]; then
-            echo "system_powerdown" | nc -N -U "/tmp/${VM_NAME}.sock" >/dev/null
+            echo "system_powerdown" | socat - UNIX-CONNECT:/tmp/${VM_NAME}.sock >/dev/null
+        else
+            echo "Ошибка: Управляющий сокет для '${VM_NAME}' не найден." >&2
+            exit 1
+        fi
+        ;;
+
+    pause)
+        if [ -S "/tmp/${VM_NAME}.sock" ]; then
+            echo "Приостановка (пауза) виртуальной машины '${VM_NAME}'..."
+            echo "stop" | socat - UNIX-CONNECT:/tmp/${VM_NAME}.sock >/dev/null
+        else
+            echo "Ошибка: Управляющий сокет для '${VM_NAME}' не найден." >&2
+            exit 1
+        fi
+        ;;
+
+    resume)
+        if [ -S "/tmp/${VM_NAME}.sock" ]; then
+            echo "Возобновление работы виртуальной машины '${VM_NAME}'..."
+            echo "cont" | socat - UNIX-CONNECT:/tmp/${VM_NAME}.sock >/dev/null
         else
             echo "Ошибка: Управляющий сокет для '${VM_NAME}' не найден." >&2
             exit 1
@@ -79,6 +104,57 @@ case "$ACTION" in
 
     kill)
         kill $(pgrep -f "qemu-system-x86_64.*-name ${VM_NAME}\b")
+        ;;
+
+    usb-attach)
+        DISK_PATH="$3"
+        if [ -z "$DISK_PATH" ] || [ ! -f "$DISK_PATH" ]; then
+            echo "Ошибка: Образ USB-носителя не задан или не найден." >&2
+            echo "Использование: $0 usb-attach <имя_машины> <путь_к_файлу.img>" >&2
+            exit 1
+        fi
+
+        if [ -S "/tmp/${VM_NAME}.sock" ]; then
+            # Поиск ID USB-контроллера в строке параметров
+            USB_ID=$(echo "$VM_PARMS" | grep -Po '(?<=-device )[^\s]*usb[^\s]*(?<=id=)[^\s,]+|(?<=-device )[^\s]*xhci[^\s]*(?<=id=)[^\s,]+' | grep -Po '(?<=id=)[^, ]+' | head -n1)
+            USB_BUS="${USB_ID:-usb}.0"
+
+            # Генерация уникального ID для носителя
+            DRIVE_ID="usb-flash-$(date +%s%N | cut -b1-13)"
+
+            echo "Имитация подключения USB-носителя к контроллеру '$USB_BUS' машины '${VM_NAME}'..."
+
+            # Регистрация файл-образа флешки
+            echo "drive_add 0 file=${DISK_PATH},format=raw,if=none,id=${DRIVE_ID}" | socat - UNIX-CONNECT:/tmp/${VM_NAME}.sock >/dev/null
+            sleep 0.5
+
+            # Подключение флешки к шине
+            echo "device_add usb-storage,bus=${USB_BUS},drive=${DRIVE_ID},id=${DRIVE_ID}-dev" | socat - UNIX-CONNECT:/tmp/${VM_NAME}.sock >/dev/null
+
+            echo "USB-носитель успешно подключен."
+        else
+            echo "Ошибка: Машина '${VM_NAME}' не запущена или управляющий сокет не найден." >&2
+            exit 1
+        fi
+        ;;
+
+    usb-detach)
+        if [ -S "/tmp/${VM_NAME}.sock" ]; then
+            # Поиск уникального id подключенной флешки в дереве устройств QEMU
+            DEVICE_ID=$(echo "info qtree" | socat - UNIX-CONNECT:/tmp/${VM_NAME}.sock 2>/dev/null | grep -Po 'id "usb-flash-[0-9]+-dev"' | head -n1 | cut -d'"' -f2)
+
+            if [ -n "$DEVICE_ID" ]; then
+                echo "Извлечение USB-носителя из машины '${VM_NAME}'..."
+                echo "device_del $DEVICE_ID" | socat - UNIX-CONNECT:/tmp/${VM_NAME}.sock >/dev/null
+                echo "USB-носитель успешно отключен."
+            else
+                echo "Ошибка: Активные имитируемые USB-носители не найдены в этой ВМ." >&2
+                exit 1
+            fi
+        else
+            echo "Ошибка: Машина '${VM_NAME}' не запущена или управляющий сокет не найден." >&2
+            exit 1
+        fi
         ;;
 
     *)
