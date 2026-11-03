@@ -22,14 +22,12 @@ deb:
 	$(eval SIZE := $(shell du -sk --exclude='DEBIAN' $(PROJECT_DIR) | cut -f1))
 	@echo "Обновление версии ($(VERSION)) и размера ($(SIZE) КБ) в $(PROJECT_DIR)/DEBIAN/control..."
 
-	@# Безопасная фильтрация старых полей без использования sed-циклов
 	@grep -vE '^(Version|Installed-Size):' $(PROJECT_DIR)/DEBIAN/control > $(PROJECT_DIR)/DEBIAN/control.tmp
 	@echo "Version: $(VERSION)" >> $(PROJECT_DIR)/DEBIAN/control.tmp
 	@echo "Installed-Size: $(SIZE)" >> $(PROJECT_DIR)/DEBIAN/control.tmp
 	@mv $(PROJECT_DIR)/DEBIAN/control.tmp $(PROJECT_DIR)/DEBIAN/control
 
 	@echo "Выставление прав на файлы структуры DEBIAN..."
-	@# Файл control должен быть 644, скрипты — 755
 	@chmod 644 $(PROJECT_DIR)/DEBIAN/control
 	@if [ -f $(PROJECT_DIR)/DEBIAN/preinst ]; then chmod 755 $(PROJECT_DIR)/DEBIAN/preinst; fi
 	@if [ -f $(PROJECT_DIR)/DEBIAN/postinst ]; then chmod 755 $(PROJECT_DIR)/DEBIAN/postinst; fi
@@ -44,7 +42,7 @@ deb:
 install:
 	@echo "Прямая установка файлов в $(DESTDIR)..."
 	sudo rsync -av --exclude='DEBIAN' --chown=root:root $(PROJECT_DIR)/ $(DESTDIR)/
-	@echo "Выполнение постинсталляционных шагов..."
+	@echo "Выполнение постинсталляционных действий..."
 	@if [ -f $(PROJECT_DIR)/DEBIAN/postinst ]; then \
 		sudo $(PROJECT_DIR)/DEBIAN/postinst configure; \
 	fi
