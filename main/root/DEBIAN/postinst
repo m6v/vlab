@@ -9,46 +9,45 @@ case "$1" in
             nmcli connection add type bridge con-name br0 ifname br0 ipv4.method manual ipv4.addresses 10.10.0.253/24
         fi
 
-        echo Установка параметров моста br0...
+        echo "Установка параметров моста br0..."
         nmcli connection modify br0 bridge.stp no ipv4.method manual ipv4.addresses 10.10.0.253/24
 
         if ! nmcli -t -f DEVICE connection show --active | grep -q "^br0$"; then
-            echo Поднятие моста br0...
+            echo "Поднятие моста br0..."
             nmcli connection up br0
         fi
 
         if ! nmcli connection show br1 >/dev/null 2>&1; then
-            echo Создание моста br1...
+            echo "Создание моста br1..."
             nmcli connection add type bridge con-name br1 ifname br1 ipv4.method manual ipv4.addresses 10.0.0.253/24
         fi
 
-        echo Установка параметров моста br1...
+        echo "Установка параметров моста br1..."
         nmcli connection modify br1 bridge.stp no ipv4.method manual ipv4.addresses 10.0.0.253/24
 
         if ! nmcli -t -f DEVICE connection show --active | grep -q "^br1$"; then
-            echo Поднятие моста br1...
+            echo "Поднятие моста br1..."
             nmcli connection up br1
         fi
 
-
-        echo Настройка хелпера (qemu-bridge-helper)...
+        echo "Настройка хелпера (qemu-bridge-helper)..."
         chown root:root /usr/lib/qemu/qemu-bridge-helper
         chmod 4755 /usr/lib/qemu/qemu-bridge-helper
 
         mkdir -p /etc/qemu
-        echo "allow br0\nallow br1" > /etc/qemu/bridge.conf
+        printf "allow br0\nallow br1\n" > /etc/qemu/bridge.conf
         chmod 0644 /etc/qemu/bridge.conf
 
-        echo Создание скелета домашнего каталога пользователей...
+        echo "Создание скелета домашнего каталога пользователей..."
         SKEL_POOL=/etc/skel/.local/share/qemu/images
         mkdir -p $SKEL_POOL
 
-        echo Создание пустых дисков...
+        echo "Создание пустых дисков..."
         qemu-img create -f qcow2 $SKEL_POOL/arm-abi.qcow2 16G
         qemu-img create -f qcow2 $SKEL_POOL/srv-szi.qcow2 32G
         qemu-img create -f qcow2 $SKEL_POOL/backup.qcow2 32G
 
-        echo Создание оверлейных дисков...
+        echo "Создание оверлейных дисков..."
         SYSTEM_POOL=/srv/qemu/images
         mkdir -p $SYSTEM_POOL
         qemu-img create -f qcow2 -F qcow2 -b $SYSTEM_POOL/arm-ipc.qcow2 $SKEL_POOL/arm-ipc.qcow2

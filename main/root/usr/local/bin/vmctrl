@@ -27,7 +27,7 @@ export HOME=/home/$USER
 VM_PARMS=$(envsubst '$HOME,$VM_NAME' < "$CONF_FILE")
 
 # Определение номера порта с учетом базы 5900 и номера дисплея
-VNC_ADDR="127.0.0.1:$((5900 + $(echo "$VM_PARMS" | grep -Po '(?<=-vnc 0.0.0.0:)[0-9]+')))"
+VNC_ADDR="127.0.0.1:$((5900 + $(echo "$VM_PARMS" | grep -Po '(?<=-vnc 0.0.0.0:)[0-9]+')))" 2>/dev/null
 
 # Поиск подстроки -spice, взятие всего до ближайшего дефиса в круглые скобки (группу)
 if [[ "$VM_PARMS" =~ -spice[[:space:]]+([^-]+) ]]; then
