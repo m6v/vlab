@@ -9,8 +9,6 @@
         .container { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; text-align: center; }
         .card { background: #2a2a2a; padding: 40px; border-radius: 12px; }
         h1 { margin-top: 0; font-size: 24px; }
-        .status { margin: 20px 0; font-size: 16px; color: #aaa; }
-        .status span.off { color: #ff4d4d; font-weight: bold; }
         .btn-start { background: #007bff; color: white; border: none; padding: 14px 28px; font-size: 16px; border-radius: 6px; cursor: pointer; }
         .btn-start:hover { background: #0056b3; }
         .btn-start:disabled { background: #555; cursor: not-allowed; }
@@ -50,9 +48,8 @@
     {{else}}
         <div class="container">
             <div class="card">
-                <h1>Виртуальная machine: {{.VMName}}</h1>
-                <div class="status">Статус: <span class="off">Выключена</span></div>
-                <button id="startBtn" class="btn-start" onclick="launchVM()">Включить питание</button>
+                <h1>Виртуальная машина {{.VMName}} выключена</h1>
+                <button id="startBtn" class="btn-start" onclick="launchVM()">Включить</button>
             </div>
         </div>
 

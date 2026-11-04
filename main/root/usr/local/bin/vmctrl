@@ -7,17 +7,43 @@ echo "$(date '+%Y-%m-%d %H:%M:%S') $0 $*" >> $LOG_FILE
 
 ACTION="$1"
 
-# Если действие не list, инициализируем и жестко проверяем параметры ВМ
-if [ "$ACTION" != "list" ]; then
-    # Проверка наличия аргумента с именем машины
-    if [ -z "$2" ]; then
-        echo "Ошибка: Не указано имя виртуальной машины." >&2
-        echo "Использование: $0 <list|info|start|stop|pause|resume|kill> <имя_машины> или $0 list" >&2
-        exit 1
+if [ "$ACTION" = "list" ]; then
+    # Поиск PID процессов и объединение их через запятую для утилиты ps
+    PIDS=$(pgrep -f "qemu-system-x86_64.*-name" | paste -sd ',' -)
+    if [ -n "$PIDS" ]; then
+        # Извлечение и склеивание имен ВМ в одну строку через пробел
+        ps -p "$PIDS" -o args= | grep -Po '(?<=-name )[^\s\b]+' | paste -sd ' ' -
+        exit 0
     fi
+    exit 1
+fi
 
-    # Выполняем экспорт, так как испольуем переменную в envsubst
-    export VM_NAME="$2"
+# Проверка наличия по крайней мере еще одного аргумента (имени ВМ)
+if [ -z "$2" ]; then
+    echo "Ошибка: Не указано имя виртуальной машины." >&2
+    echo "Использование: $0 <list|info|start|stop|resume|reset|powerdown|quit|kill> <имя_машины> или $0 list" >&2
+    exit 1
+fi
+
+# Последний аргумент всегда имя ВМ, выполняем его экспорт, так как испольуем в envsubst
+export VM_NAME="${@:$#}"
+
+# Определение имени пользователя на рабочем месте (seat0)
+export USER=$(loginctl list-sessions --no-legend | grep 'seat0' | awk '{print $3}')
+
+# Если переменная пустая (сессия не найдена или пользователь root), аварийный вызод
+if [ -z "$USER" ] || [ "$USER" = "root" ]; then
+    echo "Ошибка: Активный локальный пользователь на seat0 не найден. Запуск прерван." >&2
+    exit 1
+fi
+
+# Каталог для управляющего сокета ВМ
+mkdir -p /tmp/qemu/$USER
+chmod 700 /tmp/qemu/$USER
+# Управляющий сокет ВМ
+VM_SOCK=/tmp/qemu/$USER/$VM_NAME.sock
+
+if [ "$ACTION" = "start" ]; then
     CONF_FILE="${CONFIG_DIR}/${VM_NAME}.conf"
 
     # Проверка наличия файла конфигурации
@@ -26,21 +52,6 @@ if [ "$ACTION" != "list" ]; then
         exit 1
     fi
 
-    # Определение имени пользователя на рабочем месте (seat0)
-    export USER=$(loginctl list-sessions --no-legend | grep 'seat0' | awk '{print $3}')
-
-    # Если переменная пустая (сессия не найдена или пользователь root), аварийный вызод
-    if [ -z "$USER" ] || [ "$USER" = "root" ]; then
-        echo "Ошибка: Активный локальный пользователь на seat0 не найден. Запуск прерван." >&2
-        exit 1
-    fi
-    
-    # Каталог для управляющего сокета ВМ
-    mkdir -p /tmp/qemu/$USER
-    chmod 700 /tmp/qemu/$USER
-    # Управляющий сокет ВМ
-    VM_SOCK=/tmp/qemu/$USER/$VM_NAME.sock
-    
     # Выполняем экспорт, так как испольуем переменную в envsubst
     export HOME=/home/$USER
 
@@ -55,126 +66,88 @@ if [ "$ACTION" != "list" ]; then
         eval "declare $(echo "${BASH_REMATCH[1]}" | tr ',' ' ')"
     fi
     SPICE_ADDR="${addr}:${port}"
+
+    # Ориентируемся именно на наличие процесса, так как при нештатном
+    # завершении работы управляющий сокет может остаться открымым
+    if ! pgrep -f "qemu-system-x86_64.*-name ${VM_NAME}\b" > /dev/null; then
+        [ -S "$VM_SOCK" ] && rm -f "$VM_SOCK"
+        eval "qemu-system-x86_64 $(echo "$VM_PARMS" | paste -sd ' ' -)"
+        sleep 1
+    fi
+
+    # Запуск десктопного коиента spice, если адрес spice задан и скрипт запущен из консоли
+    # [ -t 0 ] проверяет, открыт ли дескриптор стандартного ввода 0 (stdin)
+    if [ "$SPICE_ADDR" != ":" ] && [ -t 0 ]; then
+        remote-viewer --hotkeys="release-cursor=shift+f12" "spice://$SPICE_ADDR" >/dev/null 2>&1 &
+    fi
+    
+    exit 0
 fi
+
+if [ "$ACTION" = "kill" ]; then
+    # Принудительное завершение процесса, если quit не помогла
+    kill $(pgrep -f "qemu-system-x86_64.*-name ${VM_NAME}\b") 2>/dev/null
+    exit $?
+fi
+
+if [ ! -S "$VM_SOCK" ]; then
+    echo "Ошибка: Управляющий сокет для '${VM_NAME}' не найден." >&2
+    exit 1
+fi
+
+
+# Синонимы команд
+[ "$ACTION" = "pause" ] && ACTION="stop"
+[ "$ACTION" = "resume" ] && ACTION="cont"
+[ "$ACTION" = "reset" ] && ACTION="system_reset"
+[ "$ACTION" = "powerdown" ] && ACTION="system_powerdown"
 
 # Основной блок выполнения действий
 case "$ACTION" in
-    list)
-        # Поиск PID процессов и объединение их через запятую для утилиты ps
-        PIDS=$(pgrep -f "qemu-system-x86_64.*-name" | paste -sd ',' -)
-        if [ -n "$PIDS" ]; then
-            # Извлечение и склеивание имен ВМ в одну строку через пробел
-            ps -p "$PIDS" -o args= | grep -Po '(?<=-name )[^\s\b]+' | paste -sd ' ' -
-        fi
-        ;;
-
-    info)
-        # Вывод очищенной и склеенной в одну строку конфигурации ВМ
-        echo "$VM_PARMS" | paste -sd ' ' -
-        ;;
-
-    start)
-        # Ориентируемся именно на наличик процесса, так как при нештатном
-        # завершении работы управляющий сокет может остаться открымым
-        if ! pgrep -f "qemu-system-x86_64.*-name ${VM_NAME}\b" > /dev/null; then
-            if [ -S "$VM_SOCK" ]; then
-                rm -f "$VM_SOCK"
-            fi
-            eval "qemu-system-x86_64 $(echo "$VM_PARMS" | paste -sd ' ' -)"
-            sleep 1
-        fi
-
-        if [ "$SPICE_ADDR" != ":" ]; then
-            remote-viewer --hotkeys="release-cursor=shift+f12" "spice://$SPICE_ADDR" >/dev/null 2>&1 &
-        fi
-        ;;
-    stop)
-        if [ -S "$VM_SOCK" ]; then
-            echo "system_powerdown" | socat - UNIX-CONNECT:"$VM_SOCK" >/dev/null
-        else
-            echo "Ошибка: Управляющий сокет для '${VM_NAME}' не найден." >&2
-            exit 1
-        fi
-        ;;
-
-    pause)
-        if [ -S "$VM_SOCK" ]; then
-            echo "Приостановка (пауза) виртуальной машины '${VM_NAME}'..."
-            echo "stop" | socat - UNIX-CONNECT:"$VM_SOCK" >/dev/null
-        else
-            echo "Ошибка: Управляющий сокет для '${VM_NAME}' не найден." >&2
-            exit 1
-        fi
-        ;;
-
-    resume)
-        if [ -S "$VM_SOCK" ]; then
-            echo "Возобновление работы виртуальной машины '${VM_NAME}'..."
-            echo "cont" | socat - UNIX-CONNECT:"$VM_SOCK" >/dev/null
-        else
-            echo "Ошибка: Управляющий сокет для '${VM_NAME}' не найден." >&2
-            exit 1
-        fi
-        ;;
-
-    kill)
-        kill $(pgrep -f "qemu-system-x86_64.*-name ${VM_NAME}\b") 2>/dev/null
-        ;;
-
     usb-attach)
-        DISK_PATH="$3"
+        DISK_PATH="$2"
         if [ -z "$DISK_PATH" ] || [ ! -f "$DISK_PATH" ]; then
             echo "Ошибка: Образ USB-носителя не задан или не найден." >&2
-            echo "Использование: $0 usb-attach <имя_машины> <путь_к_файлу.img>" >&2
+            echo "Использование: $0 usb-attach <путь_к_файлу.img> <имя_машины>" >&2
             exit 1
         fi
 
-        if [ -S "$VM_SOCK" ]; then
-            # Поиск ID USB-контроллера в строке параметров
-            USB_ID=$(echo "$VM_PARMS" | grep -Po '(?<=-device )[^\s]*usb[^\s]*(?<=id=)[^\s,]+|(?<=-device )[^\s]*xhci[^\s]*(?<=id=)[^\s,]+' | grep -Po '(?<=id=)[^, ]+' | head -n1)
-            USB_BUS="${USB_ID:-usb}.0"
+        # Поиск ID USB-контроллера в строке параметров
+        USB_ID=$(echo "$VM_PARMS" | grep -Po '(?<=-device )[^\s]*usb[^\s]*(?<=id=)[^\s,]+|(?<=-device )[^\s]*xhci[^\s]*(?<=id=)[^\s,]+' | grep -Po '(?<=id=)[^, ]+' | head -n1)
+        USB_BUS="${USB_ID:-usb}.0"
 
-            # Генерация уникального ID для носителя
-            DRIVE_ID="usb-flash-$(date +%s%N | cut -b1-13)"
+        # Генерация уникального ID для носителя
+        DRIVE_ID="usb-flash-$(date +%s%N | cut -b1-13)"
 
-            echo "Имитация подключения USB-носителя к контроллеру '$USB_BUS' машины '${VM_NAME}'..."
+        echo "Имитация подключения USB-носителя к контроллеру '$USB_BUS' машины '${VM_NAME}'..."
 
-            # Регистрация файл-образа флешки
-            echo "drive_add 0 file=${DISK_PATH},format=raw,if=none,id=${DRIVE_ID}" | socat - UNIX-CONNECT:"$VM_SOCK" >/dev/null
-            sleep 0.5
+        # Регистрация файл-образа USB-носителя
+        echo "drive_add 0 file=${DISK_PATH},format=raw,if=none,id=${DRIVE_ID}" | socat - UNIX-CONNECT:"$VM_SOCK" >/dev/null
+        sleep 0.5
 
-            # Подключение флешки к шине
-            echo "device_add usb-storage,bus=${USB_BUS},drive=${DRIVE_ID},id=${DRIVE_ID}-dev" | socat - UNIX-CONNECT:"$VM_SOCK" >/dev/null
+        # Подключение USB-носителя к шине
+        echo "device_add usb-storage,bus=${USB_BUS},drive=${DRIVE_ID},id=${DRIVE_ID}-dev" | socat - UNIX-CONNECT:"$VM_SOCK" >/dev/null
 
-            echo "USB-носитель успешно подключен."
-        else
-            echo "Ошибка: Управляющий сокет для '${VM_NAME}' не найден." >&2
-            exit 1
-        fi
+        echo "USB-носитель успешно подключен."
         ;;
 
     usb-detach)
-        if [ -S "$VM_SOCK" ]; then
-            # Поиск уникального id подключенной флешки в дереве устройств QEMU
-            DEVICE_ID=$(echo "info qtree" | socat - UNIX-CONNECT:"$VM_SOCK" 2>/dev/null | grep -Po 'id "usb-flash-[0-9]+-dev"' | head -n1 | cut -d'"' -f2)
+        # Поиск уникального id подключенной флешки в дереве устройств QEMU
+        DEVICE_ID=$(echo "info qtree" | socat - UNIX-CONNECT:"$VM_SOCK" 2>/dev/null | grep -Po 'id "usb-flash-[0-9]+-dev"' | head -n1 | cut -d'"' -f2)
 
-            if [ -n "$DEVICE_ID" ]; then
-                echo "Извлечение USB-носителя из машины '${VM_NAME}'..."
-                echo "device_del $DEVICE_ID" | socat - UNIX-CONNECT:"$VM_SOCK" >/dev/null
-                echo "USB-носитель успешно отключен."
-            else
-                echo "Ошибка: Активные имитируемые USB-носители не найдены в этой ВМ." >&2
-                exit 1
-            fi
+        if [ -n "$DEVICE_ID" ]; then
+            echo "Извлечение USB-носителя из машины '${VM_NAME}'..."
+            echo "device_del $DEVICE_ID" | socat - UNIX-CONNECT:"$VM_SOCK" >/dev/null
+            echo "USB-носитель успешно отключен."
         else
-            echo "Ошибка: Машина '${VM_NAME}' не запущена или управляющий сокет не найден." >&2
+            echo "Ошибка: На машине '${VM_NAME}' не найдено подключенных USB-носителей." >&2
             exit 1
         fi
         ;;
 
     *)
-        echo "Ошибка: Неизвестное действие '$ACTION'." >&2
-        echo "Использование: $0 <start|stop|kill> <имя_машины> или $0 list" >&2
-        exit 1
+        # Аргументы со второго по предпоследний (первый это $ACTION, второй это $VM_NAME, который в команде не используется)
+        EXTRA_ARGS="${@:2:$#-2}"
+        echo "$ACTION $EXTRA_ARGS" | socat - UNIX-CONNECT:"$VM_SOCK" | grep -Ev "^\(qemu\)|^QEMU"
         ;;
 esac
