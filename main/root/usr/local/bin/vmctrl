@@ -75,9 +75,8 @@ if [ "$ACTION" = "start" ]; then
         sleep 1
     fi
 
-    # Запуск десктопного коиента spice, если адрес spice задан и скрипт запущен из консоли
-    # [ -t 0 ] проверяет, открыт ли дескриптор стандартного ввода 0 (stdin)
-    if [ "$SPICE_ADDR" != ":" ] && [ -t 0 ]; then
+    # Запуск десктопного коиента spice, если адрес spice задан и скрипт запущен пользователем
+    if [ "$SPICE_ADDR" != ":" ] && [ -n "$DISPLAY" ]; then
         remote-viewer --hotkeys="release-cursor=shift+f12" "spice://$SPICE_ADDR" >/dev/null 2>&1 &
     fi
     

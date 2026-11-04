@@ -35,7 +35,6 @@ type VMInfo struct {
 
 var (
 	tokensPath  string
-	tokenPlugin string
 	webRoot     string
 	listenAddr  string
 	tokenRegexp = regexp.MustCompile(`^([a-zA-Z0-9_-]+):\s*([0-9.]+):(\d+)`)
@@ -45,7 +44,6 @@ var (
 )
 
 func main() {
-	flag.StringVar(&tokenPlugin, "token-plugin", "", "Плагин аутентификации (для совместимости с websokify)")
 	flag.StringVar(&tokensPath, "tokens", "", "Путь к файлу сопоставления токенов (базе портов)")
 	flag.StringVar(&webRoot, "webroot", "noVNC-1.7.0", "Путь к директории с файлами noVNC")
 	
@@ -80,7 +78,7 @@ func main() {
 		log.Fatalf("FATAL: Директория webroot '%s' не существует!", webRoot)
 	}
 
-	log.Printf("INFO: VNC interface started on %s (tokens: %s)", listenAddr, tokensPath)
+	log.Printf("INFO: VNC interface started on %s with tokens %s", listenAddr, tokensPath)
 
 	http.HandleFunc("/start", handleStart)
 	http.HandleFunc("/ws", handleWebSocketProxy)
@@ -93,7 +91,6 @@ func main() {
 }
 
 func handleIndex(w http.ResponseWriter, r *http.Request) {
-	// 1. ЛАКОНИЧНАЯ ОБРАБОТКА ФАВИКОНА (PNG ИЗ PIXMAPS)
 	if r.URL.Path == "/favicon.ico" {
 		var vmName string
 		if referer := r.Header.Get("Referer"); referer != "" {
@@ -121,12 +118,14 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 		}
 
 		w.Header().Set("Content-Type", "image/png")
-		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Expires", "0")
+
 		http.ServeFile(w, r, iconPath)
 		return
 	}
 
-	// 2. СТАНДАРТНАЯ ЛОГИКА ИНТЕРФЕЙСА ВМ
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return
@@ -138,7 +137,7 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// СТРОГАЯ ВАЛИДАЦИЯ: Проверяем, зарегистрировано ли имя машины в базе tokens.conf [^1]
+	// Проверка наличия имени машины в базе tokens.conf
 	if _, err := getTargetAddr(vm); err != nil {
 		log.Printf("WARNING: Попытка доступа к незарегистрированной ВМ '%s'", vm)
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -147,7 +146,7 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3. ОТРИСОВКА ЭКРАНА КОНКРЕТНОЙ ВМ
+	// Отписовка экрана ВМ
 	tmpl, err := template.ParseFiles(templatePath)
 	if err != nil {
 		log.Printf("ERROR: Failed to load template %s: %v", templatePath, err)
@@ -177,7 +176,7 @@ func getTargetAddr(token string) (string, error) {
 	}
 	defer file.Close()
 
-	// Ищем строго точное совпадение ключа с двоеточием
+	// Поиск точного совпадения ключа с двоеточием
 	targetPrefix := token + ":"
 
 	scanner := bufio.NewScanner(file)

@@ -97,3 +97,9 @@ chmod 0644 /etc/qemu/bridge.conf
     /usr/share/spice-html5 # Spice Javascript client
 /usr/local/bin/vmctrl # Программа управления виртуальными машинами
 ```
+
+# Компиляция программ
+```
+go build -o vnc-bridge main.go
+go build -o vmctrl-daemon vmctrl-daemon.go
+```
