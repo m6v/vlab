@@ -28,10 +28,15 @@ type PageData struct {
 	IsRunning bool
 }
 
+type VMInfo struct {
+	Name      string
+	IsRunning bool
+}
+
 var (
 	tokensPath  string
 	tokenPlugin string
-	webRoot     string // Переменная вместо константы
+	webRoot     string
 	listenAddr  string
 	tokenRegexp = regexp.MustCompile(`^([a-zA-Z0-9_-]+):\s*([0-9.]+):(\d+)`)
 	upgrader    = websocket.Upgrader{
@@ -40,17 +45,15 @@ var (
 )
 
 func main() {
-	// Поддержка официальных флагов websockify + наш кастомный --webroot
-	flag.StringVar(&tokenPlugin, "token-plugin", "", "Плагин аутентификации (для совместимости)")
+	flag.StringVar(&tokenPlugin, "token-plugin", "", "Плагин аутентификации (для совместимости с websokify)")
 	flag.StringVar(&tokensPath, "tokens", "", "Путь к файлу сопоставления токенов (базе портов)")
 	flag.StringVar(&webRoot, "webroot", "noVNC-1.7.0", "Путь к директории с файлами noVNC")
 	
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Использование: %s [адрес:порт] --tokens=ПУТЬ --webroot=ПУТЬ\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Использование: %s [адрес:порт] --tokens=ПУТЬ --webroot=ПУТЬ\n", os.Args)
 		flag.PrintDefaults()
 	}
 
-	// Отделяем позиционный адрес, если он указан в начале (совместимость с websockify)
 	if len(os.Args) > 1 && !strings.HasPrefix(os.Args[1], "-") {
 		listenAddr = os.Args[1]
 		os.Args = append([]string{os.Args[0]}, os.Args[2:]...)
@@ -64,48 +67,108 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Если адрес не был перехвачен в начале, берем оставшиеся аргументы или дефолт
 	if listenAddr == "" {
-		args := flag.Args()
-		if len(args) > 0 {
-			listenAddr = args[0]
-		} else {
-			listenAddr = "0.0.0.0:8080"
-		}
+		listenAddr = "0.0.0.0:8080"
 	}
 
-    // Валидация адреса
-	host, port, err := net.SplitHostPort(listenAddr)
-	if err != nil {
-		log.Fatalf("FATAL: Некорректный формат адреса прослушивания '%s': %v (Ожидается формат хост:порт или :порт)", listenAddr, err)
+	// Валидация корректности формата адреса
+	if _, _, err := net.SplitHostPort(listenAddr); err != nil {
+		log.Fatalf("FATAL: Некорректный формат адреса прослушивания '%s': %v", listenAddr, err)
 	}
 
-	// Дополнительно проверяем, что хост является валидным IP-адресом (если он указан и это не доменное имя)
-	if host != "" && host != "0.0.0.0" && host != "localhost" && net.ParseIP(host) == nil {
-		log.Printf("WARNING: Адрес хоста '%s' не является стандартным IP. Убедитесь, что это корректное доменное имя.", host)
-	}
-	log.Printf("DEBUG: Адрес прослушивания успешно верифицирован. Хост: '%s', Порт: '%s'", host, port)
-
-	// Проверяем физическое наличие папки webroot перед стартом сервера
 	if _, err := os.Stat(webRoot); os.IsNotExist(err) {
-		log.Fatalf("FATAL: Указанная директория webroot '%s' не существует!", webRoot)
+		log.Fatalf("FATAL: Директория webroot '%s' не существует!", webRoot)
 	}
 
-	log.Printf("INFO: Websockify-compatible VNC interface started on %s", listenAddr)
-	log.Printf("INFO: Tokens database loaded from: %s", tokensPath)
-	log.Printf("INFO: Using noVNC static root from: %s", webRoot)
+	log.Printf("INFO: VNC interface started on %s (tokens: %s)", listenAddr, tokensPath)
 
-	http.HandleFunc("/", handleIndex)
 	http.HandleFunc("/start", handleStart)
 	http.HandleFunc("/ws", handleWebSocketProxy)
-	
-	// Динамически подставляем переменную webRoot в файловый сервер
 	http.Handle("/novnc/", http.StripPrefix("/novnc/", http.FileServer(http.Dir(webRoot))))
+	http.HandleFunc("/", handleIndex)
 
 	if err := http.ListenAndServe(listenAddr, nil); err != nil {
 		log.Fatalf("FATAL: Web server failed: %v", err)
 	}
 }
+
+func handleIndex(w http.ResponseWriter, r *http.Request) {
+	// 1. ЛАКОНИЧНАЯ ОБРАБОТКА ФАВИКОНА (PNG ИЗ PIXMAPS)
+	if r.URL.Path == "/favicon.ico" {
+		var vmName string
+		if referer := r.Header.Get("Referer"); referer != "" {
+			if idx := strings.Index(referer, "vm="); idx != -1 {
+				rawVM := referer[idx+3:]
+				if endIdx := strings.Index(rawVM, "&"); endIdx != -1 {
+					vmName = rawVM[:endIdx]
+				} else {
+					vmName = rawVM
+				}
+			}
+		}
+		vmName = strings.TrimSpace(vmName)
+
+		iconsDir := "/usr/share/pixmaps"
+		iconPath := fmt.Sprintf("%s/%s.png", iconsDir, vmName)
+
+		if vmName == "" || isNotExist(iconPath) {
+			iconPath = fmt.Sprintf("%s/default.png", iconsDir)
+		}
+
+		if isNotExist(iconPath) {
+			http.NotFound(w, r)
+			return
+		}
+
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		http.ServeFile(w, r, iconPath)
+		return
+	}
+
+	// 2. СТАНДАРТНАЯ ЛОГИКА ИНТЕРФЕЙСА ВМ
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+
+	vm := r.URL.Query().Get("vm")
+	if vm == "" {
+		http.Error(w, "Missing 'vm' parameter. Use /?vm=name", http.StatusBadRequest)
+		return
+	}
+
+	// СТРОГАЯ ВАЛИДАЦИЯ: Проверяем, зарегистрировано ли имя машины в базе tokens.conf [^1]
+	if _, err := getTargetAddr(vm); err != nil {
+		log.Printf("WARNING: Попытка доступа к незарегистрированной ВМ '%s'", vm)
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(fmt.Sprintf("Ошибка: Виртуальная машина '%s' не зарегистрирована на этом сервере.", vm)))
+		return
+	}
+
+	// 3. ОТРИСОВКА ЭКРАНА КОНКРЕТНОЙ ВМ
+	tmpl, err := template.ParseFiles(templatePath)
+	if err != nil {
+		log.Printf("ERROR: Failed to load template %s: %v", templatePath, err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	data := PageData{
+		VMName:    vm,
+		IsRunning: isVMRunning(vm),
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = tmpl.Execute(w, data)
+}
+
+func isNotExist(path string) bool {
+	_, err := os.Stat(path)
+	return os.IsNotExist(err)
+}
+
 
 func getTargetAddr(token string) (string, error) {
 	file, err := os.Open(tokensPath)
@@ -114,19 +177,25 @@ func getTargetAddr(token string) (string, error) {
 	}
 	defer file.Close()
 
+	// Ищем строго точное совпадение ключа с двоеточием
+	targetPrefix := token + ":"
+
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		if strings.HasPrefix(line, token+":") {
+
+		if strings.HasPrefix(line, targetPrefix) {
 			matches := tokenRegexp.FindStringSubmatch(line)
 			if len(matches) > 3 {
 				return fmt.Sprintf("%s:%s", matches[2], matches[3]), nil
 			}
+			return "", fmt.Errorf("token '%s' has invalid format in config", token)
 		}
 	}
+
 	return "", fmt.Errorf("token '%s' not found in database", token)
 }
 
@@ -153,7 +222,6 @@ func isVMRunning(name string) bool {
 	}
 
 	monitorSock := fmt.Sprintf("/tmp/qemu/%s/%s.sock", activeUser, name)
-	
 	if _, err := os.Stat(monitorSock); os.IsNotExist(err) {
 		return false
 	}
@@ -164,34 +232,6 @@ func isVMRunning(name string) bool {
 	}
 	conn.Close()
 	return true
-}
-
-func handleIndex(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
-		return
-	}
-
-	vm := r.URL.Query().Get("vm")
-	if vm == "" {
-		http.Error(w, "Missing 'vm' parameter. Use /?vm=name", http.StatusBadRequest)
-		return
-	}
-
-	tmpl, err := template.ParseFiles(templatePath)
-	if err != nil {
-		log.Printf("ERROR: Failed to load template %s: %v", templatePath, err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-
-	data := PageData{
-		VMName:    vm,
-		IsRunning: isVMRunning(vm),
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = tmpl.Execute(w, data)
 }
 
 func handleStart(w http.ResponseWriter, r *http.Request) {
