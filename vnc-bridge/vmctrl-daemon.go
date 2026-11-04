@@ -11,20 +11,19 @@ import (
 )
 
 const (
-	// Единый чистый периметр для сокетов управления
 	socketPath  = "/tmp/qemu/vmctrl.sock"
 	vmctrlPath  = "/usr/local/bin/vmctrl"
 	logFileName = "vmctrl-daemon.log"
 )
 
 func main() {
-	// 1. Принудительно создаем общую runtime-директорию с полными правами
+	// Создание общей runtime-директории
 	runDir := "/tmp/qemu"
 	if err := os.MkdirAll(runDir, 0777); err != nil {
 		log.Fatalf("FATAL: Cannot create run directory %s: %v", runDir, err)
 	}
 
-	// 2. Настройка одновременного логирования в файл и в консоль (stdout)
+	// Настройка одновременного логирования в файл и в консоль (stdout)
 	var logPath string
 	if os.Getuid() == 0 {
 		logPath = "/var/log/" + logFileName
@@ -45,17 +44,17 @@ func main() {
 		log.SetOutput(io.MultiWriter(os.Stdout, logFile))
 	}
 
-	// 3. Удаляем старый сокет, если он остался в папке после аварийного закрытия
+	// Удаление старого UNIX-сокета управления, если остался после аварийного закрытия
 	_ = os.Remove(socketPath)
 
-	// 4. Создаем и запускаем UNIX-сокет управления [^1^]
+	// Создание и запуск UNIX-сокета управления
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		log.Fatalf("FATAL: Cannot create Unix socket %s: %v", socketPath, err)
 	}
 	defer listener.Close()
 
-	// Выставляем права 0666, чтобы vnc-bridge или пользователи могли передать команду запуска [^1^]
+	// Установка прав 0666, чтобы vnc-bridge или пользователи могли передать команду запуска
 	_ = os.Chmod(socketPath, 0666)
 
 	log.Printf("INFO: Administrative vmctrl-daemon successfully started on unix://%s", socketPath)
@@ -78,12 +77,12 @@ func main() {
 
 				log.Printf("EXEC: Processing console boot signal for target: %s", vmName)
 
-				// Вызываем внешний bash-скрипт микро-оркестратора
+				// Вызов внешнего bash-скрипта микро-оркестратора
 				cmd := exec.Command(vmctrlPath, "start", vmName)
 				cmd.Stdout = os.Stdout
 				cmd.Stderr = os.Stderr
 				
-				// Передаем изолированный PATH и флаг WEB_MODE для подавления локального remote-viewer
+				// Передача изолированного PATH и флаг WEB_MODE для подавления локального remote-viewer
 				cmd.Env = append(os.Environ(), 
 					"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 					"WEB_MODE=1",

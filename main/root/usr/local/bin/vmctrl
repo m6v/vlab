@@ -47,7 +47,7 @@ if [ "$ACTION" != "list" ]; then
     # Подготовка аргументов для qemu-system на основе конфигурационного файла
     VM_PARMS=$(envsubst '$USER,$HOME,$VM_NAME' < "$CONF_FILE")
 
-    # Определение номера порта с учетом базы 5900 и номера дисплея
+    # Определение номера порта с учетом базы 5900 и номера дисплея (в этой версии оркестратора не используется)
     VNC_ADDR="127.0.0.1:$((5900 + $(echo "$VM_PARMS" | grep -Po '(?<=-vnc 0.0.0.0:)[0-9]+' || echo 0)))"
 
     # Поиск подстроки -spice и взятие всего до ближайшего дефиса в круглые скобки
@@ -84,15 +84,10 @@ case "$ACTION" in
             sleep 1
         fi
 
-        if [ "$SPICE_ADDR" = ":" ]; then
-            :
-            remote-viewer --hotkeys="release-cursor=shift+f12" "vnc://$VNC_ADDR" >/dev/null 2>&1 &
-        else
-            :
+        if [ "$SPICE_ADDR" != ":" ]; then
             remote-viewer --hotkeys="release-cursor=shift+f12" "spice://$SPICE_ADDR" >/dev/null 2>&1 &
         fi
         ;;
-
     stop)
         if [ -S "$VM_SOCK" ]; then
             echo "system_powerdown" | socat - UNIX-CONNECT:"$VM_SOCK" >/dev/null
