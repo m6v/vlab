@@ -16,6 +16,7 @@ if [ "$ACTION" != "list" ]; then
         exit 1
     fi
 
+    # Выполняем экспорт, так как испольуем переменную в envsubst
     export VM_NAME="$2"
     CONF_FILE="${CONFIG_DIR}/${VM_NAME}.conf"
 
@@ -26,18 +27,25 @@ if [ "$ACTION" != "list" ]; then
     fi
 
     # Определение имени пользователя на рабочем месте (seat0)
-    USER=$(loginctl list-sessions --no-legend | grep 'seat0' | awk '{print $3}')
+    export USER=$(loginctl list-sessions --no-legend | grep 'seat0' | awk '{print $3}')
 
     # Если переменная пустая (сессия не найдена или пользователь root), аварийный вызод
     if [ -z "$USER" ] || [ "$USER" = "root" ]; then
         echo "Ошибка: Активный локальный пользователь на seat0 не найден. Запуск прерван." >&2
         exit 1
     fi
-
+    
+    # Каталог для управляющего сокета ВМ
+    mkdir -p /tmp/qemu/$USER
+    chmod 700 /tmp/qemu/$USER
+    # Управляющий сокет ВМ
+    VM_SOCK=/tmp/qemu/$USER/$VM_NAME.sock
+    
+    # Выполняем экспорт, так как испольуем переменную в envsubst
     export HOME=/home/$USER
 
     # Подготовка аргументов для qemu-system на основе конфигурационного файла
-    VM_PARMS=$(envsubst '$HOME,$VM_NAME' < "$CONF_FILE")
+    VM_PARMS=$(envsubst '$USER,$HOME,$VM_NAME' < "$CONF_FILE")
 
     # Определение номера порта с учетом базы 5900 и номера дисплея
     VNC_ADDR="127.0.0.1:$((5900 + $(echo "$VM_PARMS" | grep -Po '(?<=-vnc 0.0.0.0:)[0-9]+' || echo 0)))"
@@ -67,22 +75,26 @@ case "$ACTION" in
 
     start)
         if ! pgrep -f "qemu-system-x86_64.*-name ${VM_NAME}\b" > /dev/null; then
-            rm -f "/tmp/${VM_NAME}.sock"
+            if [ -S "$VM_SOCK" ]; then
+                rm -f "$VM_SOCK"
+            fi
             eval "qemu-system-x86_64 $(echo "$VM_PARMS" | paste -sd ' ' -)"
             sleep 1
         fi
 
         export NO_AT_BRIDGE=1
         if [ "$SPICE_ADDR" = ":" ]; then
-            remote-viewer --hotkeys="release-cursor=shift+f12" "vnc://$VNC_ADDR" >/dev/null 2>&1 &
+            :
+            # remote-viewer --hotkeys="release-cursor=shift+f12" "vnc://$VNC_ADDR" >/dev/null 2>&1 &
         else
-            remote-viewer --hotkeys="release-cursor=shift+f12" "spice://$SPICE_ADDR" >/dev/null 2>&1 &
+            :
+            # remote-viewer --hotkeys="release-cursor=shift+f12" "spice://$SPICE_ADDR" >/dev/null 2>&1 &
         fi
         ;;
 
     stop)
-        if [ -S "/tmp/${VM_NAME}.sock" ]; then
-            echo "system_powerdown" | socat - UNIX-CONNECT:/tmp/${VM_NAME}.sock >/dev/null
+        if [ -S "$VM_SOCK" ]; then
+            echo "system_powerdown" | socat - UNIX-CONNECT:"$VM_SOCK" >/dev/null
         else
             echo "Ошибка: Управляющий сокет для '${VM_NAME}' не найден." >&2
             exit 1
@@ -90,9 +102,9 @@ case "$ACTION" in
         ;;
 
     pause)
-        if [ -S "/tmp/${VM_NAME}.sock" ]; then
+        if [ -S "$VM_SOCK" ]; then
             echo "Приостановка (пауза) виртуальной машины '${VM_NAME}'..."
-            echo "stop" | socat - UNIX-CONNECT:/tmp/${VM_NAME}.sock >/dev/null
+            echo "stop" | socat - UNIX-CONNECT:"$VM_SOCK" >/dev/null
         else
             echo "Ошибка: Управляющий сокет для '${VM_NAME}' не найден." >&2
             exit 1
@@ -100,9 +112,9 @@ case "$ACTION" in
         ;;
 
     resume)
-        if [ -S "/tmp/${VM_NAME}.sock" ]; then
+        if [ -S "$VM_SOCK" ]; then
             echo "Возобновление работы виртуальной машины '${VM_NAME}'..."
-            echo "cont" | socat - UNIX-CONNECT:/tmp/${VM_NAME}.sock >/dev/null
+            echo "cont" | socat - UNIX-CONNECT:"$VM_SOCK" >/dev/null
         else
             echo "Ошибка: Управляющий сокет для '${VM_NAME}' не найден." >&2
             exit 1
@@ -121,7 +133,7 @@ case "$ACTION" in
             exit 1
         fi
 
-        if [ -S "/tmp/${VM_NAME}.sock" ]; then
+        if [ -S "$VM_SOCK" ]; then
             # Поиск ID USB-контроллера в строке параметров
             USB_ID=$(echo "$VM_PARMS" | grep -Po '(?<=-device )[^\s]*usb[^\s]*(?<=id=)[^\s,]+|(?<=-device )[^\s]*xhci[^\s]*(?<=id=)[^\s,]+' | grep -Po '(?<=id=)[^, ]+' | head -n1)
             USB_BUS="${USB_ID:-usb}.0"
@@ -132,27 +144,27 @@ case "$ACTION" in
             echo "Имитация подключения USB-носителя к контроллеру '$USB_BUS' машины '${VM_NAME}'..."
 
             # Регистрация файл-образа флешки
-            echo "drive_add 0 file=${DISK_PATH},format=raw,if=none,id=${DRIVE_ID}" | socat - UNIX-CONNECT:/tmp/${VM_NAME}.sock >/dev/null
+            echo "drive_add 0 file=${DISK_PATH},format=raw,if=none,id=${DRIVE_ID}" | socat - UNIX-CONNECT:"$VM_SOCK" >/dev/null
             sleep 0.5
 
             # Подключение флешки к шине
-            echo "device_add usb-storage,bus=${USB_BUS},drive=${DRIVE_ID},id=${DRIVE_ID}-dev" | socat - UNIX-CONNECT:/tmp/${VM_NAME}.sock >/dev/null
+            echo "device_add usb-storage,bus=${USB_BUS},drive=${DRIVE_ID},id=${DRIVE_ID}-dev" | socat - UNIX-CONNECT:"$VM_SOCK" >/dev/null
 
             echo "USB-носитель успешно подключен."
         else
-            echo "Ошибка: Машина '${VM_NAME}' не запущена или управляющий сокет не найден." >&2
+            echo "Ошибка: Управляющий сокет для '${VM_NAME}' не найден." >&2
             exit 1
         fi
         ;;
 
     usb-detach)
-        if [ -S "/tmp/${VM_NAME}.sock" ]; then
+        if [ -S "$VM_SOCK" ]; then
             # Поиск уникального id подключенной флешки в дереве устройств QEMU
-            DEVICE_ID=$(echo "info qtree" | socat - UNIX-CONNECT:/tmp/${VM_NAME}.sock 2>/dev/null | grep -Po 'id "usb-flash-[0-9]+-dev"' | head -n1 | cut -d'"' -f2)
+            DEVICE_ID=$(echo "info qtree" | socat - UNIX-CONNECT:"$VM_SOCK" 2>/dev/null | grep -Po 'id "usb-flash-[0-9]+-dev"' | head -n1 | cut -d'"' -f2)
 
             if [ -n "$DEVICE_ID" ]; then
                 echo "Извлечение USB-носителя из машины '${VM_NAME}'..."
-                echo "device_del $DEVICE_ID" | socat - UNIX-CONNECT:/tmp/${VM_NAME}.sock >/dev/null
+                echo "device_del $DEVICE_ID" | socat - UNIX-CONNECT:"$VM_SOCK" >/dev/null
                 echo "USB-носитель успешно отключен."
             else
                 echo "Ошибка: Активные имитируемые USB-носители не найдены в этой ВМ." >&2

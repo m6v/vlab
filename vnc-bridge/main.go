@@ -19,13 +19,11 @@ import (
 )
 
 const (
-	listenAddr   = ":8080"
 	webRoot      = "noVNC-1.7.0"
-	daemonSock   = "/tmp/vmctrl.sock"
+	daemonSock   = "/run/vmctrl/vmctrl.sock"
 	templatePath = "index.html"
 )
 
-// Структура для передачи состояния конкретной ВМ в HTML-шаблон
 type PageData struct {
 	VMName    string
 	IsRunning bool
@@ -33,6 +31,8 @@ type PageData struct {
 
 var (
 	tokensPath  string
+	tokenPlugin string
+	listenAddr  string
 	tokenRegexp = regexp.MustCompile(`^([a-zA-Z0-9_-]+):\s*([0-9.]+):(\d+)`)
 	upgrader    = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool { return true },
@@ -40,15 +40,38 @@ var (
 )
 
 func main() {
-	flag.StringVar(&tokensPath, "token-source", "", "Путь к файлу сопоставления токенов (базе портов)")
+	// Поддержка официальных флагов websockify
+	flag.StringVar(&tokenPlugin, "token-plugin", "", "Плагин аутентификации (для совместимости используйте TokenFile)")
+	flag.StringVar(&tokensPath, "tokens", "", "Путь к файлу сопоставления токенов (базе портов)")
+	
+	// Переопределяем стандартный Usage, чтобы он совпадал с websockify
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Использование: %s [адрес:порт] --token-plugin=TokenFile --tokens=ПУТЬ_К_ФАЙЛУ\n", os.Args[0])
+		flag.PrintDefaults()
+	}
 	flag.Parse()
 
+	// Проверяем обязательный флаг базы токенов
 	if tokensPath == "" {
-		log.Fatal("ERROR: Не указан обязательный параметр --token-source")
+		log.Println("ERROR: Не указан обязательный параметр --tokens")
+		flag.Usage()
+		os.Exit(1)
 	}
 
-	log.Printf("INFO: Dynamic VNC interface started on %s", listenAddr)
+	// Извлекаем позиционный аргумент адреса и порта (например, 0.0.0.0:8080)
+	args := flag.Args()
+	if len(args) > 0 {
+		listenAddr = args[0]
+	} else {
+		// Дефолтное значение, если адрес не указан позиционно
+		listenAddr = "0.0.0.0:8080"
+	}
+
+	log.Printf("INFO: Websockify-compatible VNC interface started on %s", listenAddr)
 	log.Printf("INFO: Tokens database loaded from: %s", tokensPath)
+	if tokenPlugin != "" {
+		log.Printf("INFO: Active token plugin: %s", tokenPlugin)
+	}
 
 	http.HandleFunc("/", handleIndex)
 	http.HandleFunc("/start", handleStart)
@@ -60,11 +83,10 @@ func main() {
 	}
 }
 
-// Динамический поиск целевого VNC-адреса по токену в файле websockify
 func getTargetAddr(token string) (string, error) {
 	file, err := os.Open(tokensPath)
 	if err != nil {
-		return "", fmt.Errorf("cannot open token source file: %v", err)
+		return "", fmt.Errorf("cannot open tokens file: %v", err)
 	}
 	defer file.Close()
 
@@ -84,9 +106,12 @@ func getTargetAddr(token string) (string, error) {
 	return "", fmt.Errorf("token '%s' not found in database", token)
 }
 
-// Проверка работы конкретной ВМ по её имени через стандартный префикс сокета QEMU
 func isVMRunning(name string) bool {
-	monitorSock := fmt.Sprintf("/tmp/%s.sock", name)
+	monitorSock := fmt.Sprintf("/run/vmctrl/%s.sock", name)
+	if _, err := os.Stat(monitorSock); os.IsNotExist(err) {
+		return false
+	}
+
 	conn, err := net.DialTimeout("unix", monitorSock, 150*time.Millisecond)
 	if err != nil {
 		return false
@@ -101,10 +126,9 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Получаем имя ВМ из строки запроса (?vm=имя_машины)
 	vm := r.URL.Query().Get("vm")
 	if vm == "" {
-		http.Error(w, "Missing 'vm' parameter in URL. Use /?vm=your-vm-name", http.StatusBadRequest)
+		http.Error(w, "Missing 'vm' parameter. Use /?vm=name", http.StatusBadRequest)
 		return
 	}
 
@@ -129,54 +153,37 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 func handleStart(w http.ResponseWriter, r *http.Request) {
 	vm := r.URL.Query().Get("vm")
 	if vm == "" {
-		log.Printf("WARNING: Start request rejected: missing 'vm' parameter")
 		http.Error(w, "Missing 'vm' parameter", http.StatusBadRequest)
 		return
 	}
 
-	log.Printf("INFO: Received web boot signal for VM: %s", vm)
-
-	// Подключаемся к системному демону
 	conn, err := net.Dial("unix", daemonSock)
 	if err != nil {
-		log.Printf("ERROR: Cannot connect to system daemon at %s: %v (Is vmctrl-daemon running?)", daemonSock, err)
-		http.Error(w, "System daemon offline", http.StatusInternalServerError)
+		log.Printf("ERROR: Daemon offline: %v", err)
+		http.Error(w, "Daemon offline", http.StatusInternalServerError)
 		return
 	}
 	defer conn.Close()
 
-	// Отправляем имя машины с символом переноса строки, так как демон использует Scanner.Scan()
-	_, err = fmt.Fprintf(conn, "%s\n", vm)
-	if err != nil {
-		log.Printf("ERROR: Failed to write VM name to daemon socket: %v", err)
-		http.Error(w, "Write error", http.StatusInternalServerError)
-		return
-	}
-
-	log.Printf("SUCCESS: Boot command for %s successfully forwarded to system daemon", vm)
+	_, _ = fmt.Fprintf(conn, "%s\n", vm)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("OK"))
 }
 
 func handleWebSocketProxy(w http.ResponseWriter, r *http.Request) {
-	// Совместимость с websockify: извлекаем токен из параметров 'token' или 'path'
 	token := r.URL.Query().Get("token")
 	if token == "" {
 		token = r.URL.Query().Get("path")
 	}
 
 	if token == "" {
-		log.Printf("WARNING: Rejecting WebSocket request: token missing")
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
 
-	log.Printf("INFO: Incoming connection request for token: %s", token)
-
-	// Ищем адрес VNC в базе тонеков websockify
 	vncTarget, err := getTargetAddr(token)
 	if err != nil {
-		log.Printf("ERROR: Authentication failed for token %s: %v", token, err)
+		log.Printf("ERROR: Auth failed for token %s: %v", token, err)
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
@@ -189,27 +196,19 @@ func handleWebSocketProxy(w http.ResponseWriter, r *http.Request) {
 
 	wsConn, err := upgrader.Upgrade(w, r, responseHeader)
 	if err != nil {
-		log.Printf("ERROR: WebSocket upgrade failed: %v", err)
 		return
 	}
 	defer wsConn.Close()
 
-	log.Printf("INFO: WebSocket upgraded! Subprotocol: %s", wsConn.Subprotocol())
-	log.Printf("INFO: Dialing QEMU VNC at %s...", vncTarget)
-
 	tcpConn, err := net.DialTimeout("tcp", vncTarget, 2*time.Second)
 	if err != nil {
-		log.Printf("ERROR: Dial QEMU VNC %s failed: %v", vncTarget, err)
 		return
 	}
 	defer tcpConn.Close()
 
-	log.Printf("SUCCESS: Bridge established with QEMU VNC %s!", vncTarget)
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Поток 1: Браузер -> QEMU
 	go func() {
 		defer cancel()
 		for {
@@ -225,7 +224,6 @@ func handleWebSocketProxy(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// Поток 2: QEMU -> Браузер
 	buf := make([]byte, 65536)
 	for {
 		select {
