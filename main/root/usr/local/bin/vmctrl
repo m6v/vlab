@@ -74,6 +74,8 @@ case "$ACTION" in
         ;;
 
     start)
+        # Ориентируемся именно на наличик процесса, так как при нештатном
+        # завершении работы управляющий сокет может остаться открымым
         if ! pgrep -f "qemu-system-x86_64.*-name ${VM_NAME}\b" > /dev/null; then
             if [ -S "$VM_SOCK" ]; then
                 rm -f "$VM_SOCK"
@@ -82,13 +84,12 @@ case "$ACTION" in
             sleep 1
         fi
 
-        export NO_AT_BRIDGE=1
         if [ "$SPICE_ADDR" = ":" ]; then
             :
-            # remote-viewer --hotkeys="release-cursor=shift+f12" "vnc://$VNC_ADDR" >/dev/null 2>&1 &
+            remote-viewer --hotkeys="release-cursor=shift+f12" "vnc://$VNC_ADDR" >/dev/null 2>&1 &
         else
             :
-            # remote-viewer --hotkeys="release-cursor=shift+f12" "spice://$SPICE_ADDR" >/dev/null 2>&1 &
+            remote-viewer --hotkeys="release-cursor=shift+f12" "spice://$SPICE_ADDR" >/dev/null 2>&1 &
         fi
         ;;
 

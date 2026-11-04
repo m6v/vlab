@@ -11,19 +11,20 @@ import (
 )
 
 const (
-	socketPath  = "/run/vmctrl/vmctrl.sock"
+	// Единый чистый периметр для сокетов управления
+	socketPath  = "/tmp/qemu/vmctrl.sock"
 	vmctrlPath  = "/usr/local/bin/vmctrl"
 	logFileName = "vmctrl-daemon.log"
 )
 
 func main() {
-	// 1. ПРИНУДИТЕЛЬНО создаем runtime-директорию на первой секунде запуска
-	runDir := "/run/vmctrl"
-	if err := os.MkdirAll(runDir, 0755); err != nil {
+	// 1. Принудительно создаем общую runtime-директорию с полными правами
+	runDir := "/tmp/qemu"
+	if err := os.MkdirAll(runDir, 0777); err != nil {
 		log.Fatalf("FATAL: Cannot create run directory %s: %v", runDir, err)
 	}
 
-	// 2. Настройка логирования в файл и в консоль одновременно
+	// 2. Настройка одновременного логирования в файл и в консоль (stdout)
 	var logPath string
 	if os.Getuid() == 0 {
 		logPath = "/var/log/" + logFileName
@@ -44,18 +45,18 @@ func main() {
 		log.SetOutput(io.MultiWriter(os.Stdout, logFile))
 	}
 
-	// 3. Очищаем старый файл сокета inside нашей готовой папки
+	// 3. Удаляем старый сокет, если он остался в папке после аварийного закрытия
 	_ = os.Remove(socketPath)
 
-	// 4. Запускаем прослушивание Unix-сокета
+	// 4. Создаем и запускаем UNIX-сокет управления [^1^]
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		log.Fatalf("FATAL: Cannot create Unix socket %s: %v", socketPath, err)
 	}
 	defer listener.Close()
 
-	// Выставляем права, чтобы vnc-bridge (если он будет работать от root) имел полный доступ
-	_ = os.Chmod(socketPath, 0660)
+	// Выставляем права 0666, чтобы vnc-bridge или пользователи могли передать команду запуска [^1^]
+	_ = os.Chmod(socketPath, 0666)
 
 	log.Printf("INFO: Administrative vmctrl-daemon successfully started on unix://%s", socketPath)
 
@@ -65,6 +66,7 @@ func main() {
 			continue
 		}
 
+		// Обработка каждого входящего сигнала в отдельном независимом потоке
 		go func(c net.Conn) {
 			defer c.Close()
 			scanner := bufio.NewScanner(c)
@@ -76,11 +78,12 @@ func main() {
 
 				log.Printf("EXEC: Processing console boot signal for target: %s", vmName)
 
+				// Вызываем внешний bash-скрипт микро-оркестратора
 				cmd := exec.Command(vmctrlPath, "start", vmName)
 				cmd.Stdout = os.Stdout
 				cmd.Stderr = os.Stderr
 				
-				// WEB_MODE=1 для того, чтобы ваш bash-скрипт не запускал remote-viewer на хосте
+				// Передаем изолированный PATH и флаг WEB_MODE для подавления локального remote-viewer
 				cmd.Env = append(os.Environ(), 
 					"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 					"WEB_MODE=1",

@@ -11,16 +11,15 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 	"time"
-
 	"github.com/gorilla/websocket"
 )
 
 const (
-	webRoot      = "noVNC-1.7.0"
-	daemonSock   = "/run/vmctrl/vmctrl.sock"
+	daemonSock   = "/tmp/qemu/vmctrl.sock"
 	templatePath = "index.html"
 )
 
@@ -32,6 +31,7 @@ type PageData struct {
 var (
 	tokensPath  string
 	tokenPlugin string
+	webRoot     string // Переменная вместо константы
 	listenAddr  string
 	tokenRegexp = regexp.MustCompile(`^([a-zA-Z0-9_-]+):\s*([0-9.]+):(\d+)`)
 	upgrader    = websocket.Upgrader{
@@ -40,42 +40,66 @@ var (
 )
 
 func main() {
-	// Поддержка официальных флагов websockify
-	flag.StringVar(&tokenPlugin, "token-plugin", "", "Плагин аутентификации (для совместимости используйте TokenFile)")
+	// Поддержка официальных флагов websockify + наш кастомный --webroot
+	flag.StringVar(&tokenPlugin, "token-plugin", "", "Плагин аутентификации (для совместимости)")
 	flag.StringVar(&tokensPath, "tokens", "", "Путь к файлу сопоставления токенов (базе портов)")
+	flag.StringVar(&webRoot, "webroot", "noVNC-1.7.0", "Путь к директории с файлами noVNC")
 	
-	// Переопределяем стандартный Usage, чтобы он совпадал с websockify
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Использование: %s [адрес:порт] --token-plugin=TokenFile --tokens=ПУТЬ_К_ФАЙЛУ\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Использование: %s [адрес:порт] --tokens=ПУТЬ --webroot=ПУТЬ\n", os.Args[0])
 		flag.PrintDefaults()
 	}
+
+	// Отделяем позиционный адрес, если он указан в начале (совместимость с websockify)
+	if len(os.Args) > 1 && !strings.HasPrefix(os.Args[1], "-") {
+		listenAddr = os.Args[1]
+		os.Args = append([]string{os.Args[0]}, os.Args[2:]...)
+	}
+
 	flag.Parse()
 
-	// Проверяем обязательный флаг базы токенов
 	if tokensPath == "" {
 		log.Println("ERROR: Не указан обязательный параметр --tokens")
 		flag.Usage()
 		os.Exit(1)
 	}
 
-	// Извлекаем позиционный аргумент адреса и порта (например, 0.0.0.0:8080)
-	args := flag.Args()
-	if len(args) > 0 {
-		listenAddr = args[0]
-	} else {
-		// Дефолтное значение, если адрес не указан позиционно
-		listenAddr = "0.0.0.0:8080"
+	// Если адрес не был перехвачен в начале, берем оставшиеся аргументы или дефолт
+	if listenAddr == "" {
+		args := flag.Args()
+		if len(args) > 0 {
+			listenAddr = args[0]
+		} else {
+			listenAddr = "0.0.0.0:8080"
+		}
+	}
+
+    // Валидация адреса
+	host, port, err := net.SplitHostPort(listenAddr)
+	if err != nil {
+		log.Fatalf("FATAL: Некорректный формат адреса прослушивания '%s': %v (Ожидается формат хост:порт или :порт)", listenAddr, err)
+	}
+
+	// Дополнительно проверяем, что хост является валидным IP-адресом (если он указан и это не доменное имя)
+	if host != "" && host != "0.0.0.0" && host != "localhost" && net.ParseIP(host) == nil {
+		log.Printf("WARNING: Адрес хоста '%s' не является стандартным IP. Убедитесь, что это корректное доменное имя.", host)
+	}
+	log.Printf("DEBUG: Адрес прослушивания успешно верифицирован. Хост: '%s', Порт: '%s'", host, port)
+
+	// Проверяем физическое наличие папки webroot перед стартом сервера
+	if _, err := os.Stat(webRoot); os.IsNotExist(err) {
+		log.Fatalf("FATAL: Указанная директория webroot '%s' не существует!", webRoot)
 	}
 
 	log.Printf("INFO: Websockify-compatible VNC interface started on %s", listenAddr)
 	log.Printf("INFO: Tokens database loaded from: %s", tokensPath)
-	if tokenPlugin != "" {
-		log.Printf("INFO: Active token plugin: %s", tokenPlugin)
-	}
+	log.Printf("INFO: Using noVNC static root from: %s", webRoot)
 
 	http.HandleFunc("/", handleIndex)
 	http.HandleFunc("/start", handleStart)
 	http.HandleFunc("/ws", handleWebSocketProxy)
+	
+	// Динамически подставляем переменную webRoot в файловый сервер
 	http.Handle("/novnc/", http.StripPrefix("/novnc/", http.FileServer(http.Dir(webRoot))))
 
 	if err := http.ListenAndServe(listenAddr, nil); err != nil {
@@ -107,7 +131,29 @@ func getTargetAddr(token string) (string, error) {
 }
 
 func isVMRunning(name string) bool {
-	monitorSock := fmt.Sprintf("/run/vmctrl/%s.sock", name)
+	cmdUser := exec.Command("loginctl", "list-sessions", "--no-legend")
+	out, err := cmdUser.Output()
+	if err != nil {
+		return false
+	}
+	
+	var activeUser string
+	lines := strings.Split(string(out), "\n")
+	for _, line := range lines {
+		if strings.Contains(line, "seat0") {
+			fields := strings.Fields(line)
+			if len(fields) >= 3 {
+				activeUser = fields[2]
+			}
+		}
+	}
+
+	if activeUser == "" || activeUser == "root" {
+		return false
+	}
+
+	monitorSock := fmt.Sprintf("/tmp/qemu/%s/%s.sock", activeUser, name)
+	
 	if _, err := os.Stat(monitorSock); os.IsNotExist(err) {
 		return false
 	}
@@ -145,9 +191,7 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := tmpl.Execute(w, data); err != nil {
-		log.Printf("ERROR: Failed to execute template: %v", err)
-	}
+	_ = tmpl.Execute(w, data)
 }
 
 func handleStart(w http.ResponseWriter, r *http.Request) {
@@ -183,7 +227,6 @@ func handleWebSocketProxy(w http.ResponseWriter, r *http.Request) {
 
 	vncTarget, err := getTargetAddr(token)
 	if err != nil {
-		log.Printf("ERROR: Auth failed for token %s: %v", token, err)
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
@@ -217,9 +260,7 @@ func handleWebSocketProxy(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if msgType == websocket.BinaryMessage {
-				if _, err := io.Copy(tcpConn, reader); err != nil {
-					return
-				}
+				_, _ = io.Copy(tcpConn, reader)
 			}
 		}
 	}()
@@ -235,9 +276,7 @@ func handleWebSocketProxy(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if n > 0 {
-				if err := wsConn.WriteMessage(websocket.BinaryMessage, buf[:n]); err != nil {
-					return
-				}
+				_ = wsConn.WriteMessage(websocket.BinaryMessage, buf[:n])
 			}
 		}
 	}
