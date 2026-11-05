@@ -7,12 +7,23 @@ BRIDGE_NAME = vnc-bridge
 # Системные пути для установки
 BIN_DIR = /usr/local/bin
 
-.PHONY: all build clean install uninstall
+.PHONY: all build clean install uninstall deps
 
 all: build
 
-# Цель компиляции обоих бинарников
-build:
+# Генерация go.mod, если его нет
+go.mod:
+	@echo "Инициализация Go-модуля..."
+	go mod init $(BRIDGE_NAME)
+
+# Скачивание зависимостей (вызывается автоматически при сборке, если go.mod уже готов)
+go.sum: go.mod
+	@echo "Проверка и скачивание зависимостей..."
+	GOPROXY=direct go get github.com/gorilla/websocket
+	GOPROXY=direct go mod tidy
+
+# Компиляция бинарников
+build: go.sum
 	@echo "Компиляция управляющего демона..."
 	$(CC) $(FLAGS) -o $(DAEMON_NAME) vmctrl-daemon.go
 	@echo "Компиляция веб-интерфейса прокси... "

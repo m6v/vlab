@@ -29,7 +29,7 @@ fi
 export VM_NAME="${@:$#}"
 
 # Определение имени пользователя на рабочем месте (seat0)
-export USER=$(loginctl list-sessions --no-legend | grep 'seat0' | awk '{print $3}')
+export USER=$(loginctl show-session $(loginctl show-seat seat0 -p ActiveSession --value) -p Name --value)
 
 # Если переменная пустая (сессия не найдена или пользователь root), аварийный вызод
 if [ -z "$USER" ] || [ "$USER" = "root" ]; then
@@ -93,7 +93,6 @@ if [ ! -S "$VM_SOCK" ]; then
     echo "Ошибка: Управляющий сокет для '${VM_NAME}' не найден." >&2
     exit 1
 fi
-
 
 # Синонимы команд
 [ "$ACTION" = "pause" ] && ACTION="stop"
