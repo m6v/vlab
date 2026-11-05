@@ -25,11 +25,8 @@ deps:
 
 # Компиляция бинарников (зависит от deps и исходных кодов)
 build: deps vmctrl-daemon.go vnc-bridge.go
-	@echo "Компиляция управляющего демона..."
-	$(CC) $(FLAGS) -o $(DAEMON_NAME) vmctrl-daemon.go
 	@echo "Компиляция веб-интерфейса прокси... "
 	$(CC) $(FLAGS) -o $(BRIDGE_NAME) vnc-bridge.go
-	@echo "Сборка успешно завершена"
 
 # Очистка папки проекта от собранных файлов
 clean:
@@ -40,13 +37,12 @@ clean:
 # Локальная установка бинарников в систему (требует sudo)
 install: build
 	@echo "Копирование бинарников в $(BIN_DIR)..."
-	install -m 0755 $(DAEMON_NAME) $(BIN_DIR)/$(DAEMON_NAME)
 	install -m 0755 $(BRIDGE_NAME) $(BIN_DIR)/$(BRIDGE_NAME)
+	install -m 0755 vmctrl-daemon.py $(BIN_DIR)/vmctrl-daemon
 	@echo "Установка завершена"
 
 # Удаление бинарников из системы (требует sudo)
 uninstall:
 	@echo "Удаление бинарников из $(BIN_DIR)..."
-	rm -f $(BIN_DIR)/$(DAEMON_NAME)
 	rm -f $(BIN_DIR)/$(BRIDGE_NAME)
 	@echo "Удалено"

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <title>{{.VMName}}</title>
-    <link rel="icon" type="image/png" href="/favicon.ico?v={{ .VMName }}">
+    <link rel="icon" type="image/png" href="/favicon.ico?v={{.VMName}}">
     <style>
         body, html { 
             margin: 0; 
@@ -73,8 +73,8 @@
 
             const vmName = "{{.VMName}}";
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${protocol}//${window.location.host}/ws?token=${encodeURIComponent(vmName)}`;
-
+            const wsUrl = protocol + "//" + window.location.host + "/ws?token=" + encodeURIComponent(vmName);
+            
             console.log("Connecting to dynamic VNC via WebSocket:", wsUrl);
 
             const rfb = new RFB(document.getElementById('vnc-screen'), wsUrl, {
@@ -87,7 +87,9 @@
             rfb.addEventListener('connect', () => { console.log("Successfully connected to VNC!"); });
             rfb.addEventListener('disconnect', (e) => { 
                 console.log("VNC Disconnected, scheduling reconnect...");
-                setTimeout(() => { window.location.reload(); }, 2000);
+                setTimeout(() => { 
+                    window.location.href = "ht" + "tp://" + window.location.hostname + ":80" + "81/?vm=" + encodeURIComponent(vmName); 
+                }, 2000);
             });
         </script>
     {{else}}
@@ -98,14 +100,14 @@
             </div>
         </div>
 
-        <script>
+        <script type="text/javascript">
             function launchVM() {
                 const btn = document.getElementById('startBtn');
                 btn.disabled = true;
                 btn.innerText = 'Запуск...';
 
                 const vmName = "{{.VMName}}";
-                fetch(`/start?vm=${encodeURIComponent(vmName)}`)
+                fetch("/start?vm=" + encodeURIComponent(vmName))
                     .then(res => {
                         if (res.ok) {
                             setTimeout(() => { window.location.reload(); }, 3000);
