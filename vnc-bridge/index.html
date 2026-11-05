@@ -15,14 +15,13 @@
         .btn-start { background: #2563eb; color: #ffffff; border: none; padding: 12px 32px; font-size: 15px; font-weight: 500; border-radius: 4px; cursor: pointer; transition: background-color 0.15s ease; }
         .btn-start:hover { background: #1d4ed8; }
         .btn-start:disabled { background: #cbd5e1; color: #64748b; cursor: not-allowed; }
-        #vnc-screen { width: 100%; height: 100%; background: #000000; display: none; }
+        #vnc-container { width: 100%; height: 100%; background: #000000; display: none; }
         #offline-ui { display: none; }
     </style>
     <script type="text/javascript">
         const PROT_STR = "ht" + "tp://";
         const PORT_STR = ":" + "{{.ProxyPort}}";
 
-        // Динамический фавикон с порта Go-моста 8080 без хардкода IP
         const fav = document.createElement('link');
         fav.rel = 'icon'; fav.type = 'image/png';
         fav.href = PROT_STR + window.location.hostname + PORT_STR + "/favicon.ico?v={{.VMName}}";
@@ -31,10 +30,9 @@
 </head>
 <body>
 
-    <!-- Блок А: Активный экран noVNC -->
-    <div id="vnc-screen"></div>
+    <!-- Заменили на динамический контейнер для жесткой очистки старых сессий -->
+    <div id="vnc-container"></div>
 
-    <!-- Блок Б: Карточка включения офлайн-машины -->
     <div id="offline-ui" class="container">
         <div class="card">
             <h1>Виртуальная машина {{.VMName}} выключена</h1>
@@ -43,22 +41,25 @@
     </div>
 
     <script type="text/javascript">
-        const vmName = "{{.VMName}}";
+        // Константы строго привязаны к шаблонизатору текущего запроса
+        const currentVM = "{{.VMName}}";
         const proxyPort = ":" + "{{.ProxyPort}}";
         const moduleUrl = "ht" + "tp://" + window.location.hostname + proxyPort + "/novnc/core/rfb.js";
 
-        // При загрузке страницы опрашиваем Python-бэкенд о реальном статусе ВМ
         window.addEventListener('load', () => {
-            fetch("/status?vm=" + encodeURIComponent(vmName))
-                .then(res => res.text()) // Чистый текстовый ответ от Python
+            // Запрашиваем статус СТРОГО для той машины, которая указана в текущем URL
+            fetch("/status?vm=" + encodeURIComponent(currentVM))
+                .then(res => res.text())
                 .then(status => {
-                    console.log("Real-time VM status received:", status);
+                    console.log(`Status for ${currentVM}:`, status);
                     if (status.trim() === "RUNNING") {
-                        // Если машина работает — раскрываем экран и инициализируем noVNC
-                        document.getElementById('vnc-screen').style.display = 'block';
-                        initVNC();
+                        const container = document.getElementById('vnc-container');
+                        // Жестко вычищаем любые остатки старых экранов из DOM перед стартом
+                        container.innerHTML = ""; 
+                        container.style.display = 'block';
+                        
+                        initVNC(container);
                     } else {
-                        // Если выключена — показываем светлый пульт управления
                         document.getElementById('offline-ui').style.display = 'flex';
                     }
                 })
@@ -68,34 +69,32 @@
                 });
         });
 
-        function initVNC() {
-            const scTag = document.createElement('script');
-            scTag.type = 'module'; scTag.src = moduleUrl;
-            document.head.appendChild(scTag);
+        function initVNC(targetElement) {
+            // Обходим утечку памяти модулей: делаем чистый динамический импорт напрямую
+            import(moduleUrl).then((mod) => {
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = protocol + "//" + window.location.hostname + proxyPort + "/ws?token=" + encodeURIComponent(currentVM);
+                
+                console.log(`Initializing VNC stream for ${currentVM} via:`, wsUrl);
 
-            scTag.onload = () => {
-                setTimeout(() => {
-                    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                    const wsUrl = protocol + "//" + window.location.hostname + proxyPort + "/ws?token=" + encodeURIComponent(vmName);
-                    
-                    console.log("Connecting to dynamic VNC via WebSocket:", wsUrl);
+                const rfb = new mod.default(targetElement, wsUrl, {
+                    wsProtocols: ['binary']
+                });
 
-                    import(moduleUrl).then((mod) => {
-                        const rfb = new mod.default(document.getElementById('vnc-screen'), wsUrl, {
-                            wsProtocols: ['binary']
-                        });
-                        rfb.scaleViewport = true;
-                        rfb.resizeSession = false;
-                        rfb.addEventListener('disconnect', () => { window.location.reload(); });
-                    });
-                }, 100);
-            };
+                rfb.scaleViewport = true;
+                rfb.resizeSession = false;
+                rfb.addEventListener('disconnect', () => { 
+                    console.log("VNC session closed.");
+                });
+            }).catch(err => {
+                console.error("Failed to load VNC component:", err);
+            });
         }
 
         function launchVM() {
             const btn = document.getElementById('startBtn');
             btn.disabled = true; btn.innerText = 'Запуск...';
-            fetch("/start?vm=" + encodeURIComponent(vmName))
+            fetch("/start?vm=" + encodeURIComponent(currentVM))
                 .then(res => {
                     if (res.ok) { setTimeout(() => { window.location.reload(); }, 3000); }
                     else { alert('Не удалось запустить ВМ'); btn.disabled = false; btn.innerText = 'Включить'; }
