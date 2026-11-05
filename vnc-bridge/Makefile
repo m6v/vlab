@@ -11,19 +11,20 @@ BIN_DIR = /usr/local/bin
 
 all: build
 
-# Генерация go.mod, если его нет
-go.mod:
-	@echo "Инициализация Go-модуля..."
-	go mod init $(BRIDGE_NAME)
+# Проверяем наличие зависимостей. Если файлов нет — инициализируем и качаем
+deps:
+	@if [ ! -f go.mod ]; then \
+		echo "Инициализация Go-модуля..."; \
+		go mod init $(BRIDGE_NAME); \
+	fi
+	@if [ ! -f go.sum ]; then \
+		echo "Проверка и скачивание зависимостей..."; \
+		GOPROXY=direct go get github.com/gorilla/websocket; \
+		GOPROXY=direct go mod tidy; \
+	fi
 
-# Скачивание зависимостей (вызывается автоматически при сборке, если go.mod уже готов)
-go.sum: go.mod
-	@echo "Проверка и скачивание зависимостей..."
-	GOPROXY=direct go get github.com/gorilla/websocket
-	GOPROXY=direct go mod tidy
-
-# Компиляция бинарников
-build: go.sum
+# Компиляция бинарников (зависит от deps и исходных кодов)
+build: deps vmctrl-daemon.go vnc-bridge.go
 	@echo "Компиляция управляющего демона..."
 	$(CC) $(FLAGS) -o $(DAEMON_NAME) vmctrl-daemon.go
 	@echo "Компиляция веб-интерфейса прокси... "
