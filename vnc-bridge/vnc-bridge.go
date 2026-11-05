@@ -9,7 +9,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -30,29 +29,26 @@ var (
 )
 
 func main() {
-	defaultIP := "0.0" + ".0.0"
-	defaultPort := "80" + "80"
-	defaultListen := fmt.Sprintf("%s:%s", defaultIP, defaultPort)
+	defaultListen := fmt.Sprintf("%s:%s", "0.0.0.0", "8080")
 
 	flag.StringVar(&tokensPath, "tokens", "", "Путь к файлу сопоставления токенов (базе портов VNC)")
 	flag.StringVar(&webRoot, "webroot", "/usr/share/novnc", "Путь к директории со статикой noVNC")
 	
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Использование: %s [адрес:порт] --tokens=ПУТЬ --webroot=ПУТЬ\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Использование: %s [адрес:порт] --tokens=ПУТЬ --webroot=ПУТЬ\n", os.Args)
 		flag.PrintDefaults()
 	}
 
-	// Корректный разбор позиционного аргумента адреса из массива os.Args
 	if len(os.Args) > 1 && !strings.HasPrefix(os.Args[1], "-") {
 		listenAddr = os.Args[1]
-		// Сдвигаем аргументы, чтобы flag.Parse() не споткнулся о позиционный адрес
+		// Сдвиг среза аргументов для flag.Parse
 		os.Args = append([]string{os.Args[0]}, os.Args[2:]...)
 	}
 
 	flag.Parse()
 
 	if tokensPath == "" {
-		log.Println("ERROR: Не указан обязательный параметр --tokens")
+		log.Println("[ERROR] Не указан обязательный параметр --tokens")
 		flag.Usage()
 		os.Exit(1)
 	}
@@ -62,23 +58,22 @@ func main() {
 	}
 
 	if _, _, err := net.SplitHostPort(listenAddr); err != nil {
-		log.Fatalf("FATAL: Некорректный формат адреса прослушивания '%s': %v", listenAddr, err)
+		log.Fatalf("[FATAL] Некорректный формат адреса прослушивания '%s': %v", listenAddr, err)
 	}
 
 	if _, err := os.Stat(webRoot); os.IsNotExist(err) {
-		log.Fatalf("FATAL: Указанная директория webroot '%s' не существует!", webRoot)
+		log.Fatalf("[FATAL] Директория webroot '%s' не существует!", webRoot)
 	}
 
-	log.Printf("INFO: Pure Smart Router vnc-bridge started on %s", listenAddr)
-	log.Printf("INFO: Tokens mapping file: %s", tokensPath)
-	log.Printf("INFO: Serving noVNC static from: %s", webRoot)
+	log.Printf("[INFO] VNC to WebSocket bridge started on %s", listenAddr)
+	log.Printf("[INFO] Tokens mapping file %s", tokensPath)
+	log.Printf("[INFO] Serving noVNC static from %s", webRoot)
 
-	// Сетевые эндпоинты: только WebSocket, статика noVNC и картинки. Никакого HTML.
-	http.HandleFunc("/ws", handleWebSocketProxy)
-	http.HandleFunc("/favicon.ico", handleFavicon)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/ws", handleWebSocketProxy)
 
 	fileServer := http.StripPrefix("/novnc/", http.FileServer(http.Dir(webRoot)))
-	http.HandleFunc("/novnc/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/novnc/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
@@ -90,37 +85,17 @@ func main() {
 		fileServer.ServeHTTP(w, r)
 	})
 
-	if err := http.ListenAndServe(listenAddr, nil); err != nil {
-		log.Fatalf("FATAL: Web server failed: %v", err)
-	}
-}
-
-func handleFavicon(w http.ResponseWriter, r *http.Request) {
-	var vmName string
-	if referer := r.Header.Get("Referer"); referer != "" {
-		if u, err := url.Parse(referer); err == nil {
-			vmName = u.Query().Get("vm")
-		}
-	}
-	vmName = strings.TrimSpace(vmName)
-
-	iconsDir := "/usr/share/pixmaps"
-	iconPath := fmt.Sprintf("%s/%s.png", iconsDir, vmName)
-
-	if vmName == "" || isNotExist(iconPath) {
-		iconPath = fmt.Sprintf("%s/default.png", iconsDir)
+	server := &http.Server{
+		Addr:         listenAddr,
+		Handler:      mux,
+		ReadTimeout:  15 * time.Minute,
+		WriteTimeout: 60 * time.Minute,
+		IdleTimeout:  120 * time.Minute,
 	}
 
-	if isNotExist(iconPath) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		http.NotFound(w, r)
-		return
+	if err := server.ListenAndServe(); err != nil {
+		log.Fatalf("[FATAL] Web server failed: %v", err)
 	}
-
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Content-Type", "image/png")
-	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-	http.ServeFile(w, r, iconPath)
 }
 
 func handleWebSocketProxy(w http.ResponseWriter, r *http.Request) {
@@ -137,7 +112,7 @@ func handleWebSocketProxy(w http.ResponseWriter, r *http.Request) {
 
 	vncTarget, err := getTargetAddr(token)
 	if err != nil {
-		log.Printf("WARNING: Направление для токена '%s' не найдено: %v", token, err)
+		log.Printf("[WARNING] Направление для токена '%s' не найдено: %v", token, err)
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte(fmt.Sprintf("Error: Token '%s' not registered", token)))
 		return
@@ -151,29 +126,30 @@ func handleWebSocketProxy(w http.ResponseWriter, r *http.Request) {
 
 	wsConn, err := upgrader.Upgrade(w, r, responseHeader)
 	if err != nil {
-		log.Printf("ERROR: WebSocket upgrade failed: %v", err)
+		log.Printf("[ERROR] WebSocket upgrade failed: %v", err)
 		return
 	}
 	
+	ctx, cancel := context.WithCancel(context.Background())
+	
 	var closeOnce sync.Once
 	closeConnections := func() {
+		cancel()
 		_ = wsConn.Close()
 	}
 	defer closeOnce.Do(closeConnections)
 
 	tcpConn, err := net.DialTimeout("tcp", vncTarget, 2*time.Second)
 	if err != nil {
-		log.Printf("ERROR: Коннект к VNC сорвался: %v", err)
+		log.Printf("[ERROR] Коннект к VNC сорвался: %v", err)
 		return
 	}
 	defer tcpConn.Close()
 
 	var wsMutex sync.Mutex
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	go func() {
-		defer cancel()
+		defer closeOnce.Do(closeConnections)
 		for {
 			msgType, reader, err := wsConn.NextReader()
 			if err != nil {
@@ -194,10 +170,16 @@ func handleWebSocketProxy(w http.ResponseWriter, r *http.Request) {
 		case <-ctx.Done():
 			return
 		default:
+			_ = tcpConn.SetReadDeadline(time.Now().Add(10 * time.Second))
 			n, err := tcpConn.Read(buf)
+			
 			if err != nil {
+				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					continue
+				}
 				return
 			}
+			
 			if n > 0 {
 				wsMutex.Lock()
 				err = wsConn.WriteMessage(websocket.BinaryMessage, buf[:n])
@@ -217,7 +199,6 @@ func getTargetAddr(token string) (string, error) {
 	}
 	defer file.Close()
 
-	targetPrefix := token + ":"
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -225,18 +206,13 @@ func getTargetAddr(token string) (string, error) {
 			continue
 		}
 
-		if strings.HasPrefix(line, targetPrefix) {
-			matches := tokenRegexp.FindStringSubmatch(line)
-			if len(matches) > 3 {
+		if matches := tokenRegexp.FindStringSubmatch(line); len(matches) > 3 {
+			// Сравнение строки token со строкой matches[1] (первая группа захвата регулярного выражения)
+			if matches[1] == token {
+				// Сбор результирующего адреса из группы IP (matches[2]) и группы порта (matches[3])
 				return fmt.Sprintf("%s:%s", matches[2], matches[3]), nil
 			}
-			return "", fmt.Errorf("token '%s' has invalid format in config", token)
 		}
 	}
 	return "", fmt.Errorf("token '%s' not found in config", token)
-}
-
-func isNotExist(path string) bool {
-	_, err := os.Stat(path)
-	return os.IsNotExist(err)
 }
