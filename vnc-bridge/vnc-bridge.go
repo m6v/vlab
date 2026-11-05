@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
 	"github.com/gorilla/websocket"
 )
 
@@ -45,7 +46,7 @@ var (
 
 func main() {
 	flag.StringVar(&tokensPath, "tokens", "", "Путь к файлу сопоставления токенов (базе портов)")
-	flag.StringVar(&webRoot, "webroot", "noVNC-1.7.0", "Путь к директории с файлами noVNC")
+	flag.StringVar(&webRoot, "webroot", "/usr/share/novnc", "Путь к директории с файлами noVNC")
 	
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Использование: %s [адрес:порт] --tokens=ПУТЬ --webroot=ПУТЬ\n", os.Args)
