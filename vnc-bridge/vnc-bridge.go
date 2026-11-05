@@ -5,7 +5,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"html/template"
 	"io"
 	"log"
 	"net"
@@ -30,11 +29,6 @@ var (
 	}
 )
 
-type GoData struct {
-	VMName    string
-	IsRunning bool
-}
-
 func main() {
 	defaultIP := "0.0" + ".0.0"
 	defaultPort := "80" + "80"
@@ -44,12 +38,14 @@ func main() {
 	flag.StringVar(&webRoot, "webroot", "/usr/share/novnc", "Путь к директории со статикой noVNC")
 	
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Использование: %s [адрес:порт] --tokens=ПУТЬ --webroot=ПУТЬ\n", os.Args)
+		fmt.Fprintf(os.Stderr, "Использование: %s [адрес:порт] --tokens=ПУТЬ --webroot=ПУТЬ\n", os.Args[0])
 		flag.PrintDefaults()
 	}
 
+	// Корректный разбор позиционного аргумента адреса из массива os.Args
 	if len(os.Args) > 1 && !strings.HasPrefix(os.Args[1], "-") {
 		listenAddr = os.Args[1]
+		// Сдвигаем аргументы, чтобы flag.Parse() не споткнулся о позиционный адрес
 		os.Args = append([]string{os.Args[0]}, os.Args[2:]...)
 	}
 
@@ -77,8 +73,9 @@ func main() {
 	log.Printf("INFO: Tokens mapping file: %s", tokensPath)
 	log.Printf("INFO: Serving noVNC static from: %s", webRoot)
 
+	// Сетевые эндпоинты: только WebSocket, статика noVNC и картинки. Никакого HTML.
 	http.HandleFunc("/ws", handleWebSocketProxy)
-	http.HandleFunc("/", handleIndex)
+	http.HandleFunc("/favicon.ico", handleFavicon)
 
 	fileServer := http.StripPrefix("/novnc/", http.FileServer(http.Dir(webRoot)))
 	http.HandleFunc("/novnc/", func(w http.ResponseWriter, r *http.Request) {
@@ -98,66 +95,32 @@ func main() {
 	}
 }
 
-func handleIndex(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path == "/favicon.ico" {
-		var vmName string
-		if referer := r.Header.Get("Referer"); referer != "" {
-			if u, err := url.Parse(referer); err == nil {
-				vmName = u.Query().Get("vm")
-			}
+func handleFavicon(w http.ResponseWriter, r *http.Request) {
+	var vmName string
+	if referer := r.Header.Get("Referer"); referer != "" {
+		if u, err := url.Parse(referer); err == nil {
+			vmName = u.Query().Get("vm")
 		}
-		vmName = strings.TrimSpace(vmName)
+	}
+	vmName = strings.TrimSpace(vmName)
 
-		iconsDir := "/usr/share/pixmaps"
-		iconPath := fmt.Sprintf("%s/%s.png", iconsDir, vmName)
+	iconsDir := "/usr/share/pixmaps"
+	iconPath := fmt.Sprintf("%s/%s.png", iconsDir, vmName)
 
-		if vmName == "" || isNotExist(iconPath) {
-			iconPath = fmt.Sprintf("%s/default.png", iconsDir)
-		}
-
-		if isNotExist(iconPath) {
-			http.NotFound(w, r)
-			return
-		}
-
-		w.Header().Set("Content-Type", "image/png")
-		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-		http.ServeFile(w, r, iconPath)
-		return
+	if vmName == "" || isNotExist(iconPath) {
+		iconPath = fmt.Sprintf("%s/default.png", iconsDir)
 	}
 
-	if r.URL.Path != "/" {
+	if isNotExist(iconPath) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
 		http.NotFound(w, r)
 		return
 	}
 
-	vm := r.URL.Query().Get("vm")
-	if vm == "" {
-		http.Error(w, "Missing 'vm' parameter", http.StatusBadRequest)
-		return
-	}
-
-	if _, err := getTargetAddr(vm); err != nil {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte(fmt.Sprintf("Ошибка: Машина '%s' не зарегистрирована.", vm)))
-		return
-	}
-
-	tmpl, err := template.ParseFiles("index.html")
-	if err != nil {
-		log.Printf("ERROR: Failed to load template: %v", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-
-	data := GoData{
-		VMName:    vm,
-		IsRunning: true,
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = tmpl.Execute(w, data)
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	http.ServeFile(w, r, iconPath)
 }
 
 func handleWebSocketProxy(w http.ResponseWriter, r *http.Request) {
@@ -200,7 +163,7 @@ func handleWebSocketProxy(w http.ResponseWriter, r *http.Request) {
 
 	tcpConn, err := net.DialTimeout("tcp", vncTarget, 2*time.Second)
 	if err != nil {
-		log.Printf("ERROR: Коннект к VNC %s сорвался: %v", vncTarget, err)
+		log.Printf("ERROR: Коннект к VNC сорвался: %v", err)
 		return
 	}
 	defer tcpConn.Close()

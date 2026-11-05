@@ -3,128 +3,105 @@
 <head>
     <meta charset="UTF-8">
     <title>{{.VMName}}</title>
-    <link rel="icon" type="image/png" href="/favicon.ico?v={{.VMName}}">
     <style>
         body, html { 
-            margin: 0; 
-            padding: 0; 
-            width: 100%; 
-            height: 100%; 
+            margin: 0; padding: 0; width: 100%; height: 100%; 
             font-family: Ubuntu, "Liberation Sans", "DejaVu Sans", sans-serif; 
-            background-color: #f5f7fa; 
-            color: #334155; 
+            background-color: #f5f7fa; color: #334155; 
         }
-        .container { 
-            display: flex; 
-            flex-direction: column; 
-            align-items: center; 
-            justify-content: center; 
-            height: 100%; 
-            text-align: center; 
-        }
-        .card { 
-            background: #ffffff; 
-            padding: 40px 50px; 
-            border-radius: 6px; 
-            border: 1px solid #e2e8f0; 
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-        }
-        h1 { 
-            margin-top: 0; 
-            margin-bottom: 25px;
-            font-size: 20px; 
-            font-weight: 500;
-            color: #1e293b;
-        }
-        .btn-start { 
-            background: #2563eb; 
-            color: #ffffff; 
-            border: none; 
-            padding: 12px 32px; 
-            font-size: 15px; 
-            font-weight: 500;
-            border-radius: 4px; 
-            cursor: pointer; 
-            transition: background-color 0.15s ease;
-        }
-        .btn-start:hover { 
-            background: #1d4ed8; 
-        }
-        .btn-start:disabled { 
-            background: #cbd5e1; 
-            color: #64748b;
-            cursor: not-allowed; 
-        }
-        #vnc-screen { 
-            width: 100%; 
-            height: 100%; 
-            background: #000000; 
-            display: block; 
-        }
+        .container { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; text-align: center; }
+        .card { background: #ffffff; padding: 40px 50px; border-radius: 6px; border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05); }
+        h1 { margin-top: 0; margin-bottom: 25px; font-size: 20px; font-weight: 500; color: #1e293b; }
+        .btn-start { background: #2563eb; color: #ffffff; border: none; padding: 12px 32px; font-size: 15px; font-weight: 500; border-radius: 4px; cursor: pointer; transition: background-color 0.15s ease; }
+        .btn-start:hover { background: #1d4ed8; }
+        .btn-start:disabled { background: #cbd5e1; color: #64748b; cursor: not-allowed; }
+        #vnc-screen { width: 100%; height: 100%; background: #000000; display: none; }
+        #offline-ui { display: none; }
     </style>
+    <script type="text/javascript">
+        const PROT_STR = "ht" + "tp://";
+        const PORT_STR = ":" + "{{.ProxyPort}}";
+
+        // Динамический фавикон с порта Go-моста 8080 без хардкода IP
+        const fav = document.createElement('link');
+        fav.rel = 'icon'; fav.type = 'image/png';
+        fav.href = PROT_STR + window.location.hostname + PORT_STR + "/favicon.ico?v={{.VMName}}";
+        document.head.appendChild(fav);
+    </script>
 </head>
 <body>
 
-    {{if .IsRunning}}
-        <div id="vnc-screen"></div>
+    <!-- Блок А: Активный экран noVNC -->
+    <div id="vnc-screen"></div>
 
-        <script type="module">
-            import RFB from '/novnc/core/rfb.js';
-
-            const vmName = "{{.VMName}}";
-            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = protocol + "//" + window.location.host + "/ws?token=" + encodeURIComponent(vmName);
-            
-            console.log("Connecting to dynamic VNC via WebSocket:", wsUrl);
-
-            const rfb = new RFB(document.getElementById('vnc-screen'), wsUrl, {
-                wsProtocols: ['binary']
-            });
-
-            rfb.scaleViewport = true;
-            rfb.resizeSession = false;
-
-            rfb.addEventListener('connect', () => { console.log("Successfully connected to VNC!"); });
-            rfb.addEventListener('disconnect', (e) => { 
-                console.log("VNC Disconnected, scheduling reconnect...");
-                setTimeout(() => { 
-                    window.location.href = "ht" + "tp://" + window.location.hostname + ":80" + "81/?vm=" + encodeURIComponent(vmName); 
-                }, 2000);
-            });
-        </script>
-    {{else}}
-        <div class="container">
-            <div class="card">
-                <h1>Виртуальная машина {{.VMName}} выключена</h1>
-                <button id="startBtn" class="btn-start" onclick="launchVM()">Включить</button>
-            </div>
+    <!-- Блок Б: Карточка включения офлайн-машины -->
+    <div id="offline-ui" class="container">
+        <div class="card">
+            <h1>Виртуальная машина {{.VMName}} выключена</h1>
+            <button id="startBtn" class="btn-start" onclick="launchVM()">Включить</button>
         </div>
+    </div>
 
-        <script type="text/javascript">
-            function launchVM() {
-                const btn = document.getElementById('startBtn');
-                btn.disabled = true;
-                btn.innerText = 'Запуск...';
+    <script type="text/javascript">
+        const vmName = "{{.VMName}}";
+        const proxyPort = ":" + "{{.ProxyPort}}";
+        const moduleUrl = "ht" + "tp://" + window.location.hostname + proxyPort + "/novnc/core/rfb.js";
 
-                const vmName = "{{.VMName}}";
-                fetch("/start?vm=" + encodeURIComponent(vmName))
-                    .then(res => {
-                        if (res.ok) {
-                            setTimeout(() => { window.location.reload(); }, 3000);
-                        } else {
-                            alert('Не удалось запустить ВМ');
-                            btn.disabled = false;
-                            btn.innerText = 'Включить';
-                        }
-                    })
-                    .catch(err => {
-                        alert('Ошибка сети: ' + err);
-                        btn.disabled = false;
-                        btn.innerText = 'Включить';
+        // При загрузке страницы опрашиваем Python-бэкенд о реальном статусе ВМ
+        window.addEventListener('load', () => {
+            fetch("/status?vm=" + encodeURIComponent(vmName))
+                .then(res => res.text()) // Чистый текстовый ответ от Python
+                .then(status => {
+                    console.log("Real-time VM status received:", status);
+                    if (status.trim() === "RUNNING") {
+                        // Если машина работает — раскрываем экран и инициализируем noVNC
+                        document.getElementById('vnc-screen').style.display = 'block';
+                        initVNC();
+                    } else {
+                        // Если выключена — показываем светлый пульт управления
+                        document.getElementById('offline-ui').style.display = 'flex';
+                    }
+                })
+                .catch(err => {
+                    console.error("Status check failed:", err);
+                    document.getElementById('offline-ui').style.display = 'flex';
+                });
+        });
+
+        function initVNC() {
+            const scTag = document.createElement('script');
+            scTag.type = 'module'; scTag.src = moduleUrl;
+            document.head.appendChild(scTag);
+
+            scTag.onload = () => {
+                setTimeout(() => {
+                    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                    const wsUrl = protocol + "//" + window.location.hostname + proxyPort + "/ws?token=" + encodeURIComponent(vmName);
+                    
+                    console.log("Connecting to dynamic VNC via WebSocket:", wsUrl);
+
+                    import(moduleUrl).then((mod) => {
+                        const rfb = new mod.default(document.getElementById('vnc-screen'), wsUrl, {
+                            wsProtocols: ['binary']
+                        });
+                        rfb.scaleViewport = true;
+                        rfb.resizeSession = false;
+                        rfb.addEventListener('disconnect', () => { window.location.reload(); });
                     });
-            }
-        </script>
-    {{end}}
+                }, 100);
+            };
+        }
 
+        function launchVM() {
+            const btn = document.getElementById('startBtn');
+            btn.disabled = true; btn.innerText = 'Запуск...';
+            fetch("/start?vm=" + encodeURIComponent(vmName))
+                .then(res => {
+                    if (res.ok) { setTimeout(() => { window.location.reload(); }, 3000); }
+                    else { alert('Не удалось запустить ВМ'); btn.disabled = false; btn.innerText = 'Включить'; }
+                })
+                .catch(err => { alert('Ошибка сети: ' + err); btn.disabled = false; btn.innerText = 'Включить'; });
+        }
+    </script>
 </body>
 </html>
