@@ -1,17 +1,26 @@
 #!/usr/bin/env python3
 import os
 import sys
-import json
 import socket
 import threading
 import subprocess
 import re
+import logging
+import argparse
 from urllib.parse import urlparse, parse_qs
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
+# Системные константы конфигурации
 DAEMON_SOCK = "/tmp/qemu/vmctrl.sock"
 TEMPLATE_PATH = "index.html"
 TOKENS_PATH = "/srv/qemu/tokens.conf"
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%Y/%m/%d %H:%M:%S',
+    stream=sys.stdout
+)
 
 def is_vm_running(vm_name):
     """Проверяет статус ВМ через loginctl и UNIX-сокеты QEMU"""
@@ -57,12 +66,13 @@ class ManagementHTTPHandler(BaseHTTPRequestHandler):
     """Обработчик HTTP запросов пульта управления лабораторией"""
     
     def log_message(self, format, *args):
-        return
+        logging.debug(format % args)
 
     def do_GET(self):
         parsed_url = urlparse(self.path)
         query_params = parse_qs(parsed_url.query)
         
+        # ЭНДПОИНТ: /start (Удаленный запуск ВМ)
         if parsed_url.path == "/start":
             vms = query_params.get("vm", [""])
             vm_name = vms[0].strip() if vms and vms[0] else ""
@@ -70,15 +80,17 @@ class ManagementHTTPHandler(BaseHTTPRequestHandler):
                 self.send_error(400, "Missing 'vm' parameter")
                 return
                 
-            print(f"[HTTP API] Запрос на запуск машины: {vm_name}")
+            logging.info(f"Start request for VM: {vm_name}")
             subprocess.Popen(["/usr/local/bin/vmctrl", "start", vm_name])
             
             self.send_response(200)
             self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(b"OK")
             return
 
+        # ENDPOINT: / (Выдача веб-страницы интерфейса конкретной ВМ)
         if parsed_url.path == "/":
             vms = query_params.get("vm", [""])
             vm_name = vms[0].strip() if vms and vms[0] else ""
@@ -87,30 +99,40 @@ class ManagementHTTPHandler(BaseHTTPRequestHandler):
                 return
 
             if not check_token_exists(vm_name):
-                print(f"[HTTP WARNING] Машина '{vm_name}' не найдена в tokens.conf")
+                logging.warning(f"Access denied: VM '{vm_name}' not found in tokens.conf")
                 self.send_response(404)
                 self.send_header("Content-Type", "text/plain; charset=utf-8")
                 self.end_headers()
-                err_msg = f"Ошибка: Виртуальная машина '{vm_name}' не зарегистрирована на этом сервере."
+                err_msg = f"Error: Virtual machine '{vm_name}' is not registered on this server."
                 self.wfile.write(err_msg.encode('utf-8'))
                 return
 
-            is_running = is_vm_running(vm_name)
-
-            if is_running:
-                self.send_response(302)
-                redirect_target = "ht" + "tp://" + "12" + "7.0.0.1:80" + f"80/?vm={vm_name}"
-                self.send_header("Location", redirect_target)
-                self.end_headers()
-                return
-
             if not os.path.exists(TEMPLATE_PATH):
+                logging.error(f"Template missing: {TEMPLATE_PATH}")
                 self.send_error(500, f"Template file {TEMPLATE_PATH} not found")
                 return
 
             with open(TEMPLATE_PATH, 'r', encoding='utf-8') as f:
                 html_content = f.read()
 
+            is_running = is_vm_running(vm_name)
+
+            # ДИНАМИЧЕСКИЙ РЕДИРЕКТ НА ПОРТ 8080 С УЧЕТОМ УДАЛЕННОГО ПОДКЛЮЧЕНИЯ [1.4]
+            if is_running:
+                host_header = self.headers.get('Host', '127.0.0.1')
+                server_ip = host_header.split(':')[0] # Вытаскиваем чистый IP или домен [1.4]
+                
+                logging.info(f"VM '{vm_name}' is running, redirecting remote client to port 8080")
+                self.send_response(302)
+                
+                # Защита от искажений вывода парсера чата
+                redirect_target = "ht" + "tp://" + f"{server_ip}:80" + f"80/?vm={vm_name}"
+                self.send_header("Location", redirect_target)
+                self.end_headers()
+                return
+
+            # ЕСЛИ МАШИНА ВЫКЛЮЧЕНА: Выдаем экран ожидания [1.4]
+            logging.info(f"Serving dashboard for offline VM: {vm_name}")
             html_content = html_content.replace("{{.VMName}}", vm_name)
             html_content = html_content.replace("{{ .VMName }}", vm_name)
             
@@ -127,13 +149,15 @@ class ManagementHTTPHandler(BaseHTTPRequestHandler):
 
         self.send_error(404, "Not Found")
 
-def run_http_server():
-    server_address = ('0.0.0.0', 8081)
+def run_http_server(host, port):
+    """Запуск веб-сервера управления"""
+    server_address = (host, port)
     httpd = HTTPServer(server_address, ManagementHTTPHandler)
-    print("[INIT] HTTP Управляющий веб-сервер успешно запущен на порту 8081...")
+    logging.info(f"HTTP management server listening on {host}:{port}")
     httpd.serve_forever()
 
 def run_unix_socket_listener():
+    """Запуск прослушивания UNIX сокета для команд локального хоста"""
     if os.path.exists(DAEMON_SOCK):
         os.remove(DAEMON_SOCK)
         
@@ -143,22 +167,44 @@ def run_unix_socket_listener():
     server.bind(DAEMON_SOCK)
     os.chmod(DAEMON_SOCK, 0o777)
     server.listen(5)
-    print(f"[INIT] UNIX-сокет управления успешно активирован: {DAEMON_SOCK}")
+    logging.info(f"UNIX management socket activated: {DAEMON_SOCK}")
 
     while True:
         try:
             conn, _ = server.accept()
             data = conn.recv(1024).decode('utf-8').strip()
             if data:
-                print(f"[UNIX SOCK] Поступила локальная команда на запуск машины: {data}")
+                logging.info(f"UNIX socket command received to start VM: {data}")
                 subprocess.Popen(["/usr/local/bin/vmctrl", "start", data])
             conn.close()
         except Exception as e:
-            print(f"[UNIX ERROR] Ошибка обработки команды через сокет: {e}")
+            logging.error(f"UNIX socket processing error: {e}")
 
 if __name__ == "__main__":
-    print("=== ЗАПУСК УПРАВЛЯЮЩЕГО ДЕМОНА VLAB ===")
-    t_http = threading.Thread(target=run_http_server, daemon=True)
+    parser = argparse.ArgumentParser(
+        description="VLab management daemon for QEMU virtual machines orchestration.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    parser.add_argument(
+        "listen",
+        nargs="?",
+        default="0.0.0.0:8081",
+        help="Listen address and port for management HTTP server"
+    )
+    args = parser.parse_args()
+
+    logging.info("Starting vlab management daemon")
+    
+    try:
+        listen_host, port_str = args.listen.split(':')
+        listen_port = int(port_str)
+    except ValueError:
+        logging.error(f"Invalid listen address format '{args.listen}', falling back to default configuration")
+        default_value = parser.get_default("listen")
+        listen_host, port_str = default_value.split(':')
+        listen_port = int(port_str)
+
+    t_http = threading.Thread(target=run_http_server, args=(listen_host, listen_port), daemon=True)
     t_sock = threading.Thread(target=run_unix_socket_listener, daemon=True)
     
     t_http.start()
@@ -168,7 +214,7 @@ if __name__ == "__main__":
         t_http.join()
         t_sock.join()
     except KeyboardInterrupt:
-        print("\n[SHUTDOWN] Демон остановлен администратором.")
+        logging.info("Daemon terminated by administrator")
         if os.path.exists(DAEMON_SOCK):
             os.remove(DAEMON_SOCK)
         sys.exit(0)
