@@ -97,3 +97,20 @@ deb: build
 	# 7. Финальное удаление временных файлов сборщика из /tmp
 	rm -rf $(BUILD_DIR)
 	@echo "Package compiled successfully: $(PKG_NAME)_$(VERSION)_amd64.deb"
+
+# Автоматическая публикация релиза на GitHub (требует установленного gh cli)
+release: deb
+	$(eval COMMIT_COUNT := $(shell git rev-list --count HEAD 2>/dev/null || echo 0))
+	$(eval VERSION := $(BASE_VERSION).$(COMMIT_COUNT))
+	@echo "Starting GitHub release pipeline for version v$(VERSION)..."
+
+	# 1. Создаем и пушим тег в репозиторий
+	git tag -a v$(VERSION) -m "Automated release v$(VERSION)" || true
+	git push origin v$(VERSION)
+
+	# 2. Создаем релиз на GitHub и прикрепляем собранный .deb пакет
+	gh release create v$(VERSION) $(PKG_NAME)_$(VERSION)_amd64.deb \
+		--title "Release v$(VERSION)" \
+		--notes "Automated build from commit count ##$(COMMIT_COUNT)."
+
+	@echo "Release v$(VERSION) successfully published to GitHub"
