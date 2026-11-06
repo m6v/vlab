@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-
 import os
 import sys
 import socket
@@ -22,16 +21,16 @@ def get_vnc_address(vm_name, tokens_path):
     with open(tokens_path, 'r', encoding='utf-8') as f:
         for line in f:
             line = line.strip()
-            # Пропускаем пустые строки и комментарии
+            # Пропуск пустых строк и комментариев
             if not line or line.startswith('#'):
                 continue
 
-            # Проверяем, начинается ли строка с имени ВМ и двоеточия
+            # Проверка, начинается ли строка с имени ВМ и двоеточия
             if line.startswith(f"{vm_name}:"):
-                # Разделяем строго по первому двоеточию
+                # Разделение строго по первому двоеточию
                 parts = line.split(':', 1)
                 if len(parts) == 2:
-                    return parts[1].strip() # Возвращаем чистую строку "127.0.0.1:5912"
+                    return parts[1].strip() # Возврат чистой строки "127.0.0.1:5912"
     return None
 
 def is_vm_running(vm_name, tokens_path):
@@ -45,7 +44,7 @@ def is_vm_running(vm_name, tokens_path):
         with socket.create_connection((host, int(port_str)), timeout=1.0):
             return True
     except Exception:
-        # Любой сбой (connection refused, timeout) означает, что машина выключена
+        # Любой сбой (connection refused, timeout) означает, что ВМ выключена
         return False
 
 class VLabManagementHandler(BaseHTTPRequestHandler):
@@ -138,47 +137,40 @@ class CleanThreadingHTTPServer(ThreadingHTTPServer):
             return
         super().handle_error(request, client_address)
 
+def valid_listen_address(netloc):
+    """Валидирует формат HOST:PORT и возвращает кортеж (host, port)."""
+    try:
+        host, port_str = netloc.rsplit(':', 1)
+        port = int(port_str)
+        # Валидация диапазона порта
+        if not (1 <= port <= 65535):
+            raise ValueError
+        
+        # Валидация хоста
+        socket.gethostbyname(host)
+        
+        # Возврат готового кортежа для сервера
+        return (host, port) 
+    except (ValueError, socket.error):
+        raise argparse.ArgumentTypeError(
+            f"'{netloc}' is not a valid listen address. Expected 'HOST:PORT' (e.g., 0.0.0.0:8081)"
+        )
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Web Console Server - Universal lightweight web interface and gateway for VNC/RFB streams.")
-    parser.add_argument("listen", nargs="?", default="0.0.0.0:8081", help="Listen address and port (e.g. 0.0.0.0:8081)")
+    parser.add_argument("listen", nargs="?", type=valid_listen_address, default="0.0.0.0:8081", help="Listen address and port (e.g. 0.0.0.0:8081)")
     parser.add_argument("--proxy-port", type=int, default=8080, help="VNC proxy runtime port")
     parser.add_argument("--tokens", default="/srv/qemu/tokens.conf", help="Path to tokens configuration file")
     args = parser.parse_args()
 
-    # Валидация двоеточия для IPv4
-    if ':' not in args.listen or args.listen.count(':') != 1:
-        logging.critical(f"Invalid listen address format '{args.listen}'. Expected 'HOST:PORT' (e.g. 0.0.0.0:8081)")
-        sys.exit(1)
+    host, port = args.listen
 
-    host, port_str = args.listen.split(':')
-
-    # Валидация порта
-    try:
-        port = int(port_str)
-        if not (1 <= port <= 65535):
-            raise ValueError
-    except ValueError:
-        logging.critical(f"Invalid port value '{port_str}'. Port must be an integer between 1 and 65535.")
-        sys.exit(1)
-
-    # Валидация IPv4-хоста
-    try:
-        socket.inet_aton(host)
-    except socket.error:
-        try:
-            socket.gethostbyname(host)
-        except socket.gaierror:
-            logging.critical(f"Hostname or IPv4 address '{host}' is invalid or cannot be resolved.")
-            sys.exit(1)
-
-    # Валидация шаблона при старте
+    # Валидация шаблона
     if not os.path.exists(TEMPLATE_PATH):
         logging.critical(f"Required UI template file component is missing: {TEMPLATE_PATH}")
         sys.exit(1)
 
-    logging.info(f"Management infrastructure successfully started on {host}:{port}")
-    logging.info(f"Using tokens configuration file source: {args.tokens}")
-
+    logging.info(f"Management infrastructure successfully started on {host}:{port} with tokens configuration file source: {args.tokens}")
     server = CleanThreadingHTTPServer((host, port), VLabManagementHandler, args.proxy_port, args.tokens)
 
     try:
