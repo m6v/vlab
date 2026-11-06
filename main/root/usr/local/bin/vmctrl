@@ -3,8 +3,6 @@
 CONFIG_DIR="/srv/qemu/config"
 LOG_FILE="/srv/qemu/vmctrl.log"
 
-echo "$(date '+%Y-%m-%d %H:%M:%S') $0 $*" >> $LOG_FILE
-
 ACTION="$1"
 
 if [ "$ACTION" = "list" ]; then
@@ -31,8 +29,11 @@ export VM_NAME="${@:$#}"
 # Определение имени пользователя на рабочем месте (seat0)
 export USER=$(loginctl show-session $(loginctl show-seat seat0 -p ActiveSession --value) -p Name --value)
 
-# Если переменная пустая (сессия не найдена или пользователь root), аварийный вызод
-if [ -z "$USER" ] || [ "$USER" = "root" ]; then
+# Логирование исполняемой команды
+echo "$(date '+%Y-%m-%d %H:%M:%S') $(hostname) seat0:$USER $0 $*" >> $LOG_FILE
+
+# Если пользователь не найден или root, аварийный выход
+if [[ $(id -u $USER 2>/dev/null) -eq 0 ]]; then
     echo "Ошибка: Активный локальный пользователь на seat0 не найден. Запуск прерван." >&2
     exit 1
 fi
@@ -67,19 +68,19 @@ if [ "$ACTION" = "start" ]; then
     fi
     SPICE_ADDR="${addr}:${port}"
 
-    # Ориентируемся именно на наличие процесса, так как при нештатном
-    # завершении работы управляющий сокет может остаться открымым
+    # Запуск VM_NAME, если не запущена
     if ! pgrep -f "qemu-system-x86_64.*-name ${VM_NAME}\b" > /dev/null; then
+        # Удаление управляющего сокета, если остался после некорректной остановки
         [ -S "$VM_SOCK" ] && rm -f "$VM_SOCK"
         eval "qemu-system-x86_64 $(echo "$VM_PARMS" | paste -sd ' ' -)"
         sleep 1
     fi
 
-    # Запуск десктопного коиента spice, если адрес spice задан и скрипт запущен пользователем
+    # Запуск десктопного клиента spice, если адрес spice задан и скрипт запущен пользователем
     if [ "$SPICE_ADDR" != ":" ] && [ -n "$DISPLAY" ]; then
         remote-viewer --hotkeys="release-cursor=shift+f12" "spice://$SPICE_ADDR" >/dev/null 2>&1 &
     fi
-    
+
     exit 0
 fi
 
