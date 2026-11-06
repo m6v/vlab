@@ -70,14 +70,22 @@
                 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
                 const wsUrl = `${protocol}//${window.location.hostname}:${proxyPort}/ws?token=${encodeURIComponent(currentVM)}`;
 
-                console.log(`[VNC] Initializing VNC stream ${wsUrl}`);
+                console.log(`[VNC] Подключение к стриму: ${wsUrl}`);
 
+                // Добавляем focusOnClick: true в настройки noVNC
                 const rfb = new mod.default(targetElement, wsUrl, {
-                    wsProtocols: ['binary']
+                    wsProtocols: ['binary'],
+                    focusOnClick: true
                 });
 
                 rfb.scaleViewport = true;
                 rfb.resizeSession = false;
+
+                // Автоматически захватываем фокус клавиатуры и мыши сразу после инициализации
+                setTimeout(() => {
+                    rfb.focus();
+                    console.log("[VNC] Фокус ввода успешно захвачен");
+                }, 100);
 
                 rfb.addEventListener('disconnect', (e) => {
                     console.log("[VNC] Сессия закрыта:", e);

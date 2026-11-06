@@ -18,17 +18,21 @@ def get_vnc_address(vm_name, tokens_path):
     if not os.path.exists(tokens_path):
         logging.error(f"Configuration file not found: {tokens_path}")
         return None
+
     with open(tokens_path, 'r', encoding='utf-8') as f:
         for line in f:
             line = line.strip()
+            # Пропускаем пустые строки и комментарии
             if not line or line.startswith('#'):
                 continue
+
+            # Проверяем, начинается ли строка с имени нашей ВМ и двоеточия
             if line.startswith(f"{vm_name}:"):
-                try:
-                    return line.split(':', 1)[1].strip()
-                except IndexError:
-                    continue
-        return None
+                # Разделяем строго по первому двоеточию
+                parts = line.split(':', 1)
+                if len(parts) == 2:
+                    return parts[1].strip() # Возвращаем чистую строку "127.0.0.1:5912"
+    return None
 
 def is_vm_running(vm_name, tokens_path):
     """Проверяет статус ВМ сетевым пингом VNC-порта"""
@@ -36,10 +40,12 @@ def is_vm_running(vm_name, tokens_path):
     if not addr or ':' not in addr:
         return False
     try:
-        host, port = addr.split(':')
-        with socket.create_connection((host, int(port)), timeout=1.0):
+        host, port_str = addr.split(':')
+        # Реальное системное TCP-рукопожатие. Если порт закрыт -> уйдет в exception -> вернет False
+        with socket.create_connection((host, int(port_str)), timeout=1.0):
             return True
     except Exception:
+        # Любой сбой (connection refused, timeout) означает, что машина выключена
         return False
 
 class VLabManagementHandler(BaseHTTPRequestHandler):
@@ -55,10 +61,45 @@ class VLabManagementHandler(BaseHTTPRequestHandler):
         vm_name = vms[0].strip() if vms and vms[0] else ""
         tokens_path = self.server.tokens_path
 
-        # API ЭНДПОИНТ: Запуск ВМ
+        # API ЭНДПОИНТ: Запуск ВМ от имени активного графического пользователя
         if parsed_url.path == "/start" and vm_name:
-            logging.info(f"Start command requested for VM: {vm_name}")
-            subprocess.Popen(["/usr/local/bin/vmctrl", "start", vm_name])
+            logging.info(f"Start request for VM: {vm_name}")
+
+            target_user = "nobody"
+            try:
+                # 1. Получаем ID активной сессии (например, "2" или "c1")
+                session_id = subprocess.check_output(
+                    ["loginctl", "show-seat", "seat0", "-p", "ActiveSession", "--value"],
+                    universal_newlines=True
+                ).strip()
+
+                if session_id and session_id != "none":
+                    # 2. Получаем владельца сессии. loginctl может вернуть как "m6v", так и "1000"
+                    raw_user = subprocess.check_output(
+                        ["loginctl", "show-session", session_id, "-p", "User", "--value"],
+                        universal_newlines=True
+                    ).strip()
+
+                    if raw_user:
+                        import pwd
+                        # 3. Честный перевод UID/Имени в строго текстовое имя пользователя Linux
+                        if raw_user.isdigit():
+                            target_user = pwd.getpwuid(int(raw_user)).pw_name
+                        else:
+                            target_user = pwd.getpwnam(raw_user).pw_name
+            except Exception as e:
+                logging.warning(f"Failed to detect active graphical user via loginctl: {e}. Falling back to 'nobody'.")
+
+            # 4. Безопасно запускаем vmctrl от имени текстового пользователя
+            if target_user != "nobody":
+                logging.info(f"Dynamically switching context to user '{target_user}' for VM '{vm_name}'")
+                cmd = ["runuser", "-l", target_user, "-c", f"/usr/local/bin/vmctrl start {vm_name}"]
+            else:
+                logging.warning(f"No active graphical session detected. Spawning VM as 'nobody'.")
+                cmd = ["runuser", "-l", "nobody", "-c", f"/usr/local/bin/vmctrl start {vm_name}"]
+
+            subprocess.Popen(cmd)
+
             self.send_response(200)
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
