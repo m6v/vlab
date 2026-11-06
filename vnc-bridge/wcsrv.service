@@ -1,0 +1,19 @@
+[Unit]
+Description=Web Console Server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/srv/qemu
+ExecStart=/usr/bin/python3 /srv/qemu/wcsrv 0.0.0.0:8081 --proxy-port=8080 --tokens=/srv/qemu/tokens.conf
+Restart=always
+RestartSec=5
+# Настройки логирования в syslog/journald
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wcsrv
+
+[Install]
+WantedBy=multi-user.target

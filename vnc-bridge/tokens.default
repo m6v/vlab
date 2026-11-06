@@ -1,0 +1,4 @@
+# WCSRV / VNC2WS Token Mapping Configuration
+# Format: vm_name: ipv4_address:vnc_port
+# Example:
+# my_server: 127.0.0.1:5901

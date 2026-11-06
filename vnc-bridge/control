@@ -1,0 +1,7 @@
+Package: vlab-webengine
+Section: utils
+Priority: optional
+Architecture: amd64
+Depends: python3
+Maintainer: Maksimov Sergey <m6v@mail.ru>
+Description: Universal web console engine for virtual machines.

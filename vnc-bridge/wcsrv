@@ -173,7 +173,7 @@ class CleanThreadingHTTPServer(ThreadingHTTPServer):
         super().handle_error(request, client_address)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="VLab compact management daemon.")
+    parser = argparse.ArgumentParser(description="WCSRV (Web Console Server) — Universal lightweight web interface and gateway for VNC/RFB streams.")
     parser.add_argument("listen", nargs="?", default="0.0.0.0:8081", help="Listen address and port (e.g. 0.0.0.0:8081)")
     parser.add_argument("--proxy-port", type=int, default=8080, help="VNC proxy runtime port")
     parser.add_argument("--tokens", default="/srv/qemu/tokens.conf", help="Path to tokens configuration file")
