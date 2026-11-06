@@ -3,6 +3,23 @@
 CONFIG_DIR="/srv/qemu/config"
 LOG_FILE="/srv/qemu/vmctrl.log"
 
+# Определение имени пользователя на рабочем месте (seat0)
+export USER=$(loginctl show-session $(loginctl show-seat seat0 -p ActiveSession --value) -p Name --value)
+
+# Если пользователь не найден или root, аварийный выход
+if [[ $(id -u $USER 2>/dev/null) -eq 0 ]]; then
+    echo "Ошибка: Активный локальный пользователь на seat0 не найден. Запуск прерван." >&2
+    exit 1
+fi
+
+# Если скрипт запущен от root (EUID 0), перезупуск от $USER
+if [ "$EUID" -eq 0 ]; then
+    exec runuser -l "$USER" -c "$(printf '%q ' "$0" "$@")"
+fi
+
+# Логирование исполняемой команды
+echo "$(date '+%Y-%m-%d %H:%M:%S') $(hostname) seat0:$USER $0 $*" >> $LOG_FILE
+
 ACTION="$1"
 
 if [ "$ACTION" = "list" ]; then
@@ -26,18 +43,6 @@ fi
 # Последний аргумент всегда имя ВМ, выполняем его экспорт, так как испольуем в envsubst
 export VM_NAME="${@:$#}"
 
-# Определение имени пользователя на рабочем месте (seat0)
-export USER=$(loginctl show-session $(loginctl show-seat seat0 -p ActiveSession --value) -p Name --value)
-
-# Логирование исполняемой команды
-echo "$(date '+%Y-%m-%d %H:%M:%S') $(hostname) seat0:$USER $0 $*" >> $LOG_FILE
-
-# Если пользователь не найден или root, аварийный выход
-if [[ $(id -u $USER 2>/dev/null) -eq 0 ]]; then
-    echo "Ошибка: Активный локальный пользователь на seat0 не найден. Запуск прерван." >&2
-    exit 1
-fi
-
 # Каталог для управляющего сокета ВМ
 mkdir -p /tmp/qemu/$USER
 chmod 700 /tmp/qemu/$USER
@@ -59,7 +64,7 @@ if [ "$ACTION" = "start" ]; then
     # Подготовка аргументов для qemu-system на основе конфигурационного файла
     VM_PARMS=$(envsubst '$USER,$HOME,$VM_NAME' < "$CONF_FILE")
 
-    # Определение номера порта с учетом базы 5900 и номера дисплея (в этой версии оркестратора не используется)
+    # Определение номера порта с учетом базы 5900 и номера дисплея
     VNC_ADDR="127.0.0.1:$((5900 + $(echo "$VM_PARMS" | grep -Po '(?<=-vnc 0.0.0.0:)[0-9]+' || echo 0)))"
 
     # Поиск подстроки -spice и взятие всего до ближайшего дефиса в круглые скобки

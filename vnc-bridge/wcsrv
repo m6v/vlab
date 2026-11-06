@@ -26,7 +26,7 @@ def get_vnc_address(vm_name, tokens_path):
             if not line or line.startswith('#'):
                 continue
 
-            # Проверяем, начинается ли строка с имени нашей ВМ и двоеточия
+            # Проверяем, начинается ли строка с имени ВМ и двоеточия
             if line.startswith(f"{vm_name}:"):
                 # Разделяем строго по первому двоеточию
                 parts = line.split(':', 1)
@@ -35,13 +35,13 @@ def get_vnc_address(vm_name, tokens_path):
     return None
 
 def is_vm_running(vm_name, tokens_path):
-    """Проверяет статус ВМ сетевым пингом VNC-порта"""
+    """Проверяет статус ВМ"""
     addr = get_vnc_address(vm_name, tokens_path)
     if not addr or ':' not in addr:
         return False
     try:
         host, port_str = addr.split(':')
-        # Реальное системное TCP-рукопожатие. Если порт закрыт -> уйдет в exception -> вернет False
+        # Попытка TCP-рукопожатия, если порт закрыт, выбросит исключение и вернет False
         with socket.create_connection((host, int(port_str)), timeout=1.0):
             return True
     except Exception:
@@ -63,43 +63,9 @@ class VLabManagementHandler(BaseHTTPRequestHandler):
 
         # API ЭНДПОИНТ: Запуск ВМ от имени активного графического пользователя
         if parsed_url.path == "/start" and vm_name:
-            logging.info(f"Start request for VM: {vm_name}")
-
-            target_user = "nobody"
-            try:
-                # 1. Получаем ID активной сессии (например, "2" или "c1")
-                session_id = subprocess.check_output(
-                    ["loginctl", "show-seat", "seat0", "-p", "ActiveSession", "--value"],
-                    universal_newlines=True
-                ).strip()
-
-                if session_id and session_id != "none":
-                    # 2. Получаем владельца сессии. loginctl может вернуть как "m6v", так и "1000"
-                    raw_user = subprocess.check_output(
-                        ["loginctl", "show-session", session_id, "-p", "User", "--value"],
-                        universal_newlines=True
-                    ).strip()
-
-                    if raw_user:
-                        import pwd
-                        # 3. Честный перевод UID/Имени в строго текстовое имя пользователя Linux
-                        if raw_user.isdigit():
-                            target_user = pwd.getpwuid(int(raw_user)).pw_name
-                        else:
-                            target_user = pwd.getpwnam(raw_user).pw_name
-            except Exception as e:
-                logging.warning(f"Failed to detect active graphical user via loginctl: {e}. Falling back to 'nobody'.")
-
-            # 4. Безопасно запускаем vmctrl от имени текстового пользователя
-            if target_user != "nobody":
-                logging.info(f"Dynamically switching context to user '{target_user}' for VM '{vm_name}'")
-                cmd = ["runuser", "-l", target_user, "-c", f"/usr/local/bin/vmctrl start {vm_name}"]
-            else:
-                logging.warning(f"No active graphical session detected. Spawning VM as 'nobody'.")
-                cmd = ["runuser", "-l", "nobody", "-c", f"/usr/local/bin/vmctrl start {vm_name}"]
-
+            logging.info(f"Starting {vm_name}...")
+            cmd = ["/usr/local/bin/vmctrl", "start", vm_name]
             subprocess.Popen(cmd)
-
             self.send_response(200)
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
@@ -173,7 +139,7 @@ class CleanThreadingHTTPServer(ThreadingHTTPServer):
         super().handle_error(request, client_address)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="WCSRV (Web Console Server) — Universal lightweight web interface and gateway for VNC/RFB streams.")
+    parser = argparse.ArgumentParser(description="Web Console Server - Universal lightweight web interface and gateway for VNC/RFB streams.")
     parser.add_argument("listen", nargs="?", default="0.0.0.0:8081", help="Listen address and port (e.g. 0.0.0.0:8081)")
     parser.add_argument("--proxy-port", type=int, default=8080, help="VNC proxy runtime port")
     parser.add_argument("--tokens", default="/srv/qemu/tokens.conf", help="Path to tokens configuration file")
