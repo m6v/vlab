@@ -21,7 +21,7 @@ var (
 	tokensPath  string
 	webRoot     string
 	listenAddr  string
-	tokenRegexp = regexp.MustCompile(`^([a-zA-Z0-9_-]+):\s*([a-zA-Z0-9_.-]+):(\d+)`) // Изменено: поддерживает и IP, и домены/localhost
+	tokenRegexp = regexp.MustCompile(`^([a-zA-Z0-9_-]+):\s*([0-9.]+):(\d+)`)
 	upgrader    = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool { return true },
 	}
@@ -30,11 +30,11 @@ var (
 func main() {
 	defaultListen := fmt.Sprintf("%s:%s", "0.0.0.0", "8080")
 
-	flag.StringVar(&tokensPath, "tokens", "", "Путь к файлу сопоставления токенов (базе портов VNC)")
-	flag.StringVar(&webRoot, "webroot", "/usr/share/novnc", "Путь к директории со статикой noVNC")
+	flag.StringVar(&tokensPath, "tokens", "", "Path to the tokens mapping configuration file")
+	flag.StringVar(&webRoot, "webroot", "/usr/share/novnc", "Path to noVNC static web assets root directory")
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Использование: %s [адрес:порт] --tokens=ПУТЬ --webroot=ПУТЬ\n", os.Args)
+		fmt.Fprintf(os.Stderr, "Usage: %s [listen_address:port] --tokens=PATH --webroot=PATH\n", os.Args[0])
 		flag.PrintDefaults()
 	}
 
@@ -46,7 +46,7 @@ func main() {
 	flag.Parse()
 
 	if tokensPath == "" {
-		log.Println("[ERROR] Не указан обязательный параметр --tokens")
+		log.Println("[ERROR] Missing required parameter: --tokens")
 		flag.Usage()
 		os.Exit(1)
 	}
@@ -56,16 +56,16 @@ func main() {
 	}
 
 	if _, _, err := net.SplitHostPort(listenAddr); err != nil {
-		log.Fatalf("[FATAL] Некорректный формат адреса прослушивания '%s': %v", listenAddr, err)
+		log.Fatalf("[FATAL] Invalid listen address format '%s': %v", listenAddr, err)
 	}
 
 	if _, err := os.Stat(webRoot); os.IsNotExist(err) {
-		log.Fatalf("[FATAL] Директория webroot '%s' не существует!", webRoot)
+		log.Fatalf("[FATAL] Specified webroot directory '%s' does not exist", webRoot)
 	}
 
-	log.Printf("[INFO] VNC to WebSocket bridge started on %s", listenAddr)
-	log.Printf("[INFO] Tokens mapping file %s", tokensPath)
-	log.Printf("[INFO] Serving noVNC static from %s", webRoot)
+	log.Printf("[INFO] VNC to WebSocket bridge initialized on %s", listenAddr)
+	log.Printf("[INFO] Token mapping configuration source: %s", tokensPath)
+	log.Printf("[INFO] Serving static web assets from %s", webRoot)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", handleWebSocketProxy)
@@ -92,7 +92,7 @@ func main() {
 	}
 
 	if err := server.ListenAndServe(); err != nil {
-		log.Fatalf("[FATAL] Web server failed: %v", err)
+		log.Fatalf("[FATAL] HTTP server runtime error: %v", err)
 	}
 }
 
@@ -110,7 +110,7 @@ func handleWebSocketProxy(w http.ResponseWriter, r *http.Request) {
 
 	vncTarget, err := getTargetAddr(token)
 	if err != nil {
-		log.Printf("[WARNING] Направление для токена '%s' не найдено: %v", token, err)
+		log.Printf("[WARNING] Route targeting failed for token '%s': %v", token, err)
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte(fmt.Sprintf("Error: Token '%s' not registered", token)))
 		return
@@ -124,70 +124,64 @@ func handleWebSocketProxy(w http.ResponseWriter, r *http.Request) {
 
 	wsConn, err := upgrader.Upgrade(w, r, responseHeader)
 	if err != nil {
-		log.Printf("[ERROR] WebSocket upgrade failed: %v", err)
+		log.Printf("[ERROR] WebSocket protocol upgrade failed: %v", err)
 		return
 	}
 
-	// Подключение к VNC-серверу QEMU
 	tcpConn, err := net.DialTimeout("tcp", vncTarget, 5*time.Second)
 	if err != nil {
-		log.Printf("[ERROR] [%s] Не удалось подключиться к VNC-серверу QEMU (%s): %v", token, vncTarget, err)
+		log.Printf("[ERROR] [%s] TCP connection establishment to backend VNC server '%s' failed: %v", token, vncTarget, err)
 		_ = wsConn.Close()
 		return
 	}
-	log.Printf("[INFO] [%s] Успешное TCP-подключение к VNC %s", token, vncTarget)
+	log.Printf("[INFO] [%s] Established TCP connection link to VNC backend target '%s'", token, vncTarget)
 
-	// Структура для безопасного атомарного закрытия ресурсов из разных горутин
 	var closeOnce sync.Once
 	closeConnections := func() {
 		_ = tcpConn.Close()
 		_ = wsConn.Close()
-		log.Printf("[INFO] [%s] Все соединения (WS и TCP) успешно заблокированы и закрыты", token)
+		log.Printf("[INFO] [%s] Closed all transport channels (WebSocket and TCP connection pools)", token)
 	}
 	defer closeOnce.Do(closeConnections)
 
-	// Настройка таймаутов для WebSocket, чтобы noVNC и прокси не теряли друг друга
 	_ = wsConn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	wsConn.SetPongHandler(func(string) error {
 		_ = wsConn.SetReadDeadline(time.Now().Add(60 * time.Second))
 		return nil
 	})
 
-	// Мьютекс для защиты от конкурентной записи в WebSocket
 	var wsMutex sync.Mutex
 
-	// Горутина чтения из браузера (WS) и записи в виртуальную машину (TCP)
+	// Inbound pipeline: Browser (WS) -> Virtual Machine (TCP)
 	go func() {
 		defer closeOnce.Do(closeConnections)
 		for {
 			msgType, reader, err := wsConn.NextReader()
 			if err != nil {
-				log.Printf("[INFO] [%s] WebSocket закрыт со стороны браузера или по таймауту: %v", token, err)
+				log.Printf("[INFO] [%s] Inbound WebSocket channel closed: %v", token, err)
 				return
 			}
-
-			// Продление жизни WS-соединения при активности пользователя
 			_ = wsConn.SetReadDeadline(time.Now().Add(60 * time.Second))
 
 			if msgType == websocket.BinaryMessage {
 				_, err = io.Copy(tcpConn, reader)
 				if err != nil {
-					log.Printf("[WARNING] [%s] Ошибка записи данных в TCP-порт VNC: %v", token, err)
+					log.Printf("[WARNING] [%s] Failed to write inbound data frame payload to TCP socket: %v", token, err)
 					return
 				}
 			}
 		}
 	}()
 
-	// Горутина чтения из Виртуальной машины (TCP) и записи в браузер (WS)
+	// Outbound pipeline: Virtual Machine (TCP) -> Browser (WS)
 	buf := make([]byte, 65536)
 	for {
 		n, err := tcpConn.Read(buf)
 		if err != nil {
 			if err == io.EOF {
-				log.Printf("[INFO] [%s] VNC-сервер QEMU закрыл соединение", token)
+				log.Printf("[INFO] [%s] Backend VNC target issued orderly connection shutdown (EOF)", token)
 			} else {
-				log.Printf("[ERROR] [%s] Сбой при чтении из TCP-порта VNC: %v", token, err)
+				log.Printf("[ERROR] [%s] Outbound TCP socket data stream read fault: %v", token, err)
 			}
 			return
 		}
@@ -197,7 +191,7 @@ func handleWebSocketProxy(w http.ResponseWriter, r *http.Request) {
 			err = wsConn.WriteMessage(websocket.BinaryMessage, buf[:n])
 			wsMutex.Unlock()
 			if err != nil {
-				log.Printf("[WARNING] [%s] Не удалось отправить VNC-кадр в WebSocket: %v", token, err)
+				log.Printf("[WARNING] [%s] Failed to transmit frame payload to WebSocket client connection: %v", token, err)
 				return
 			}
 		}
@@ -207,7 +201,7 @@ func handleWebSocketProxy(w http.ResponseWriter, r *http.Request) {
 func getTargetAddr(token string) (string, error) {
 	file, err := os.Open(tokensPath)
 	if err != nil {
-		return "", fmt.Errorf("cannot open tokens file: %v", err)
+		return "", fmt.Errorf("failed to open configuration source file: %v", err)
 	}
 	defer file.Close()
 
@@ -224,5 +218,5 @@ func getTargetAddr(token string) (string, error) {
 			}
 		}
 	}
-	return "", fmt.Errorf("token '%s' not found in config", token)
+	return "", fmt.Errorf("specified metadata token identifier was not matched")
 }
