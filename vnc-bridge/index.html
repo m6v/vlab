@@ -53,7 +53,7 @@
                         const container = document.getElementById('vnc-container');
                         container.innerHTML = ""; 
                         container.style.display = 'block';
-                        
+
                         initVNC(container);
                     } else {
                         document.getElementById('offline-ui').style.display = 'flex';
@@ -69,8 +69,8 @@
             import(moduleUrl).then((mod) => {
                 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
                 const wsUrl = `${protocol}//${window.location.hostname}:${proxyPort}/ws?token=${encodeURIComponent(currentVM)}`;
-                
-                console.log(`Initializing VNC stream for ${currentVM} via: ${wsUrl}`);
+
+                console.log(`[VNC] Initializing VNC stream ${wsUrl}`);
 
                 const rfb = new mod.default(targetElement, wsUrl, {
                     wsProtocols: ['binary']
@@ -78,23 +78,76 @@
 
                 rfb.scaleViewport = true;
                 rfb.resizeSession = false;
-                rfb.addEventListener('disconnect', () => { 
-                    console.log("VNC session closed.");
+
+                rfb.addEventListener('disconnect', (e) => {
+                    console.log("[VNC] Сессия закрыта:", e);
                 });
             }).catch(err => {
-                console.error("Failed to load VNC component:", err);
+                console.error("[VNC] Ошибка загрузки компонента rfb.js:", err);
             });
         }
 
+        // Новая функция умного опроса статуса
+        function pollStatus(attempts = 0) {
+            // Если машина не запустилась за 10 секунд (20 попыток), прекращаем опрос
+            if (attempts > 20) {
+                alert('Виртуальная машина запускается слишком долго. Попробуйте обновить страницу вручную.');
+                const btn = document.getElementById('startBtn');
+                btn.disabled = false;
+                btn.innerText = 'Включить';
+                return;
+            }
+
+            fetch(`/status?vm=${encodeURIComponent(currentVM)}`)
+                .then(res => res.text())
+                .then(status => {
+                    if (status.trim() === "RUNNING") {
+                        console.log(`[POLL] ВМ ${currentVM} успешно запущена на попытке ${attempts}`);
+
+                        // Скрываем плашку выключенной ВМ
+                        document.getElementById('offline-ui').style.display = 'none';
+
+                        // Включаем контейнер VNC
+                        const container = document.getElementById('vnc-container');
+                        container.innerHTML = "";
+                        container.style.display = 'block';
+
+                        // Подключаемся
+                        initVNC(container);
+                    } else {
+                        // Если все еще STOPPED, ждем 500мс и проверяем снова
+                        setTimeout(() => pollStatus(attempts + 1), 500);
+                    }
+                })
+                .catch(err => {
+                    console.error("[POLL] Ошибка проверки статуса:", err);
+                    setTimeout(() => pollStatus(attempts + 1), 500);
+                });
+        }
+
+        // Измененная функция клика по кнопке
         function launchVM() {
             const btn = document.getElementById('startBtn');
-            btn.disabled = true; btn.innerText = 'Запуск...';
+            btn.disabled = true;
+            btn.innerText = 'Запуск...';
+
             fetch(`/start?vm=${encodeURIComponent(currentVM)}`)
                 .then(res => {
-                    if (res.ok) { setTimeout(() => { window.location.reload(); }, 3000); }
-                    else { alert('Не удалось запустить ВМ'); btn.disabled = false; btn.innerText = 'Включить'; }
+                    if (res.ok) {
+                        console.log(`[START] Сигнал на запуск отправлен. Начинаем опрос...`);
+                        // Начинаем динамический опрос вместо перезагрузки страницы
+                        pollStatus();
+                    } else {
+                        alert('Не удалось запустить ВМ');
+                        btn.disabled = false;
+                        btn.innerText = 'Включить';
+                    }
                 })
-                .catch(err => { alert('Ошибка сети: ' + err); btn.disabled = false; btn.innerText = 'Включить'; });
+                .catch(err => {
+                    alert('Ошибка сети: ' + err);
+                    btn.disabled = false;
+                    btn.innerText = 'Включить';
+                });
         }
     </script>
 </body>

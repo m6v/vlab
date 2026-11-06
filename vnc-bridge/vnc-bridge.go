@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -22,7 +21,7 @@ var (
 	tokensPath  string
 	webRoot     string
 	listenAddr  string
-	tokenRegexp = regexp.MustCompile(`^([a-zA-Z0-9_-]+):\s*([0-9.]+):(\d+)`)
+	tokenRegexp = regexp.MustCompile(`^([a-zA-Z0-9_-]+):\s*([a-zA-Z0-9_.-]+):(\d+)`) // Изменено: поддерживает и IP, и домены/localhost
 	upgrader    = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool { return true },
 	}
@@ -33,7 +32,7 @@ func main() {
 
 	flag.StringVar(&tokensPath, "tokens", "", "Путь к файлу сопоставления токенов (базе портов VNC)")
 	flag.StringVar(&webRoot, "webroot", "/usr/share/novnc", "Путь к директории со статикой noVNC")
-	
+
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Использование: %s [адрес:порт] --tokens=ПУТЬ --webroot=ПУТЬ\n", os.Args)
 		flag.PrintDefaults()
@@ -41,7 +40,6 @@ func main() {
 
 	if len(os.Args) > 1 && !strings.HasPrefix(os.Args[1], "-") {
 		listenAddr = os.Args[1]
-		// Сдвиг среза аргументов для flag.Parse
 		os.Args = append([]string{os.Args[0]}, os.Args[2:]...)
 	}
 
@@ -77,7 +75,7 @@ func main() {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		
+
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
 			return
@@ -129,64 +127,78 @@ func handleWebSocketProxy(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[ERROR] WebSocket upgrade failed: %v", err)
 		return
 	}
-	
-	ctx, cancel := context.WithCancel(context.Background())
-	
+
+	// Подключение к VNC-серверу QEMU
+	tcpConn, err := net.DialTimeout("tcp", vncTarget, 5*time.Second)
+	if err != nil {
+		log.Printf("[ERROR] [%s] Не удалось подключиться к VNC-серверу QEMU (%s): %v", token, vncTarget, err)
+		_ = wsConn.Close()
+		return
+	}
+	log.Printf("[INFO] [%s] Успешное TCP-подключение к VNC %s", token, vncTarget)
+
+	// Структура для безопасного атомарного закрытия ресурсов из разных горутин
 	var closeOnce sync.Once
 	closeConnections := func() {
-		cancel()
+		_ = tcpConn.Close()
 		_ = wsConn.Close()
+		log.Printf("[INFO] [%s] Все соединения (WS и TCP) успешно заблокированы и закрыты", token)
 	}
 	defer closeOnce.Do(closeConnections)
 
-	tcpConn, err := net.DialTimeout("tcp", vncTarget, 2*time.Second)
-	if err != nil {
-		log.Printf("[ERROR] Коннект к VNC сорвался: %v", err)
-		return
-	}
-	defer tcpConn.Close()
+	// Настройка таймаутов для WebSocket, чтобы noVNC и прокси не теряли друг друга
+	_ = wsConn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	wsConn.SetPongHandler(func(string) error {
+		_ = wsConn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		return nil
+	})
 
+	// Мьютекс для защиты от конкурентной записи в WebSocket
 	var wsMutex sync.Mutex
 
+	// Горутина чтения из браузера (WS) и записи в виртуальную машину (TCP)
 	go func() {
 		defer closeOnce.Do(closeConnections)
 		for {
 			msgType, reader, err := wsConn.NextReader()
 			if err != nil {
+				log.Printf("[INFO] [%s] WebSocket закрыт со стороны браузера или по таймауту: %v", token, err)
 				return
 			}
+
+			// Продление жизни WS-соединения при активности пользователя
+			_ = wsConn.SetReadDeadline(time.Now().Add(60 * time.Second))
+
 			if msgType == websocket.BinaryMessage {
 				_, err = io.Copy(tcpConn, reader)
 				if err != nil {
+					log.Printf("[WARNING] [%s] Ошибка записи данных в TCP-порт VNC: %v", token, err)
 					return
 				}
 			}
 		}
 	}()
 
+	// Горутина чтения из Виртуальной машины (TCP) и записи в браузер (WS)
 	buf := make([]byte, 65536)
 	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			_ = tcpConn.SetReadDeadline(time.Now().Add(10 * time.Second))
-			n, err := tcpConn.Read(buf)
-			
-			if err != nil {
-				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-					continue
-				}
-				return
+		n, err := tcpConn.Read(buf)
+		if err != nil {
+			if err == io.EOF {
+				log.Printf("[INFO] [%s] VNC-сервер QEMU закрыл соединение", token)
+			} else {
+				log.Printf("[ERROR] [%s] Сбой при чтении из TCP-порта VNC: %v", token, err)
 			}
-			
-			if n > 0 {
-				wsMutex.Lock()
-				err = wsConn.WriteMessage(websocket.BinaryMessage, buf[:n])
-				wsMutex.Unlock()
-				if err != nil {
-					return
-				}
+			return
+		}
+
+		if n > 0 {
+			wsMutex.Lock()
+			err = wsConn.WriteMessage(websocket.BinaryMessage, buf[:n])
+			wsMutex.Unlock()
+			if err != nil {
+				log.Printf("[WARNING] [%s] Не удалось отправить VNC-кадр в WebSocket: %v", token, err)
+				return
 			}
 		}
 	}
@@ -207,9 +219,7 @@ func getTargetAddr(token string) (string, error) {
 		}
 
 		if matches := tokenRegexp.FindStringSubmatch(line); len(matches) > 3 {
-			// Сравнение строки token со строкой matches[1] (первая группа захвата регулярного выражения)
 			if matches[1] == token {
-				// Сбор результирующего адреса из группы IP (matches[2]) и группы порта (matches[3])
 				return fmt.Sprintf("%s:%s", matches[2], matches[3]), nil
 			}
 		}

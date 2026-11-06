@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+
 import os, sys, socket, subprocess, logging, argparse
 from urllib.parse import urlparse, parse_qs
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -16,14 +17,14 @@ def get_vnc_address(vm_name):
         return match[0] if match else None
 
 def is_vm_running(vm_name):
-    """Проверяет статус ВМ сетевым пингом VNC-порта"""
+    """Проверяет статус ВМ сетевым пингом VNC-порта с надежным таймаутом"""
     addr = get_vnc_address(vm_name)
     if not addr or ':' not in addr: return False
     try:
         host, port = addr.split(':')
-        with socket.create_connection((host, int(port)), timeout=0.1): 
+        with socket.create_connection((host, int(port)), timeout=1.0):
             return True
-    except Exception: 
+    except Exception:
         return False
 
 class VLabManagementHandler(BaseHTTPRequestHandler):
@@ -33,7 +34,7 @@ class VLabManagementHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed_url = urlparse(self.path)
         query_params = parse_qs(parsed_url.query)
-        
+
         vms = query_params.get("vm", [""])
         vm_name = vms[0].strip() if vms and vms[0] else ""
 
@@ -119,9 +120,9 @@ if __name__ == "__main__":
     except ValueError: host, port_str = '0.0.0.0', '8081'
 
     logging.info(f"Starting management infrastructure on {host}:{port_str}")
-    
+
     # Передача распарсенного proxy-port третьим аргументом в конструктор сервера
     server = CleanThreadingHTTPServer((host, int(port_str)), VLabManagementHandler, args.proxy_port)
-    
+
     try: server.serve_forever()
     except KeyboardInterrupt: logging.info("Daemon terminated by admin")
