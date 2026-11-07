@@ -54,12 +54,12 @@ async def ws_handler(websocket):
     
     # ФОЛБЭК: Защита работы за корпоративными реверс-прокси
     if not token:
-        forwarded_uri = websocket.request_headers.get('X-Forwarded-Uri', '')
+        forwarded_uri = websocket.request.headers.get('X-Forwarded-Uri', '')
         # Безопасно отсекаем путь, забирая только query-строку параметров
         _, _, fwd_query = forwarded_uri.partition('?')
         
         fwd_list = parse_qs(fwd_query).get('token', [""])
-        token = fwd_list.strip()
+        token = fwd_list[0].strip() if fwd_list and fwd_list[0] else None
 
     if not token:
         await websocket.close(1008, "Missing token")
@@ -150,14 +150,30 @@ async def main(listen_host, listen_port):
         logging.info(f"VNC-to-WebSocket Bridge Engine active on port {listen_port}")
         await asyncio.Future()  # Бесконечное удержание асинхронного цикла событий (Event Loop)
 
+def valid_listen_address(netloc):
+    """
+    Унифицированный валидатор сетевого адреса для argparse.
+    
+    Принимает строки вида '8080' или '0.0.0.0:8080'.
+    Возвращает кортеж (host, port).
+    """
+    try:
+        host, port_str = netloc.rsplit(':', 1) if ":" in netloc else ("0.0.0.0", netloc)
+        port = int(port_str)
+        if not (1 <= port <= 65535): raise ValueError
+        return host, port
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"'{netloc}' не является валидным сетевым адресом.")
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="vnc2ws-bridge: High-performance Network Proxy")
-    parser.add_argument("listen_target", nargs="?", default="0.0.0.0:8080")
+    parser.add_argument("listen_target", nargs="?", type=valid_listen_address, default="0.0.0.0:8080")
     parser.add_argument("--token-source", default="/srv/qemu/tokens.conf")
     args = parser.parse_args()
 
     TOKENS_PATH = args.token_source
-    host, port = args.listen_target.rsplit(':', 1) if ":" in args.listen_target else ("0.0.0.0", args.listen_target)
+    # ИСПРАВЛЕНО: Прямая распаковка готового кортежа из валидатора без дублирования rsplit
+    host, port = args.listen_target
     
-    try: asyncio.run(main(host, int(port)))
+    try: asyncio.run(main(host, port))
     except KeyboardInterrupt: pass

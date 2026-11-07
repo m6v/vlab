@@ -6,6 +6,7 @@ import re
 import argparse
 from urllib.parse import parse_qs
 import websockets
+# ПРИМЕЧАНИЕ: В websockets v10.4 сервер serve импортируется напрямую из корня пакета
 from websockets import serve as ws_serve
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
@@ -39,12 +40,17 @@ def get_target_addr(token):
 async def ws_handler(websocket, path):
     """
     Главный асинхронный воркер WebSocket соединения (спецификация websockets v10.4).
+    
+    КРИТИЧЕСКИЙ НЮАНС (Архитектура ws10): В легаси-версии библиотеки полный путь 
+    запроса со строкой параметров передается вторым обязательным аргументом 'path'. 
+    Если прокси-сервер частично обрезал его, оригинальный полный URI извлекается 
+    напрямую из низкоуровневого свойства websocket.path.
     """
     current_path = websocket.path if (hasattr(websocket, 'path') and "?" in getattr(websocket, 'path', '')) else path
     
-    # ИСПРАВЛЕНО: Безопасное строковое разделение через .partition('?').
+    # Безопасное строковое разделение через .partition('?').
     # Метод возвращает кортеж (до_знака, знак, после_знака). Нам нужна только часть ПОСЛЕ знака.
-    _, separator, query_str = current_path.partition('?')
+    _, _, query_str = current_path.partition('?')
     
     # БЕЗОПАСНОЕ ИЗВЛЕЧЕНИЕ: Использование фолбэка [""] защищает индекс [0] от IndexError.
     # Текстовый маркер [0] прописан явно, метод .strip() применяется строго к строке.
@@ -54,12 +60,13 @@ async def ws_handler(websocket, path):
     
     # ФОЛБЭК: Защита работы за корпоративными реверс-прокси
     if not token:
-        forwarded_uri = websocket.request.headers.get('X-Forwarded-Uri', '')
+        # НЮАНС: В websockets v10.4 заголовки запроса лежат в websocket.request_headers
+        forwarded_uri = websocket.request_headers.get('X-Forwarded-Uri', '')
         # Безопасно отсекаем путь, забирая только query-строку параметров
         _, _, fwd_query = forwarded_uri.partition('?')
         
         fwd_list = parse_qs(fwd_query).get('token', [""])
-        token = fwd_list.strip()
+        token = fwd_list[0].strip() if fwd_list and fwd_list[0] else None
 
     if not token:
         await websocket.close(1008, "Missing token")
@@ -138,7 +145,7 @@ def modify_handshake_headers(path, request_headers):
     """
     Перехватчик стадии WebSocket Handshake (спецификация websockets v10.4).
 
-    КРИТИЧЕСКИЙ НЮАНС (Победа над HTTP 426): Если вышестоящий прокси-сервер прислал заголовок
+    КРИТИЧЕСКИЙ НЮАНС (Победа над HTTP 426): Если вышестоящий прокси-серver прислал заголовок
     'Connection: keep-alive, Upgrade', легаси-библиотека разорвет соединение. 
     Этот хук принимает объект заголовков напрямую и принудительно переписывает его на чистый 'Upgrade'.
     """
@@ -158,7 +165,12 @@ async def main(listen_host, listen_port):
         await asyncio.Event().wait()
 
 def valid_listen_address(netloc):
-    """Унифицированный валидатор сетевых хостов и портов для argparse"""
+    """
+    Унифицированный валидатор сетевого адреса для argparse.
+    
+    Принимает строки вида '8080' или '0.0.0.0:8080'.
+    Возвращает кортеж (host, port).
+    """
     try:
         host, port_str = netloc.rsplit(':', 1) if ":" in netloc else ("0.0.0.0", netloc)
         return host, int(port_str)
@@ -167,12 +179,13 @@ def valid_listen_address(netloc):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="vnc2ws-bridge: High-performance Legacy Proxy")
-    parser.add_argument("listen_target", nargs="?", default="0.0.0.0:8080")
+    parser.add_argument("listen_target", nargs="?", type=valid_listen_address, default="0.0.0.0:8080")
     parser.add_argument("--token-source", default="/srv/qemu/tokens.conf")
     args = parser.parse_args()
 
     TOKENS_PATH = args.token_source
-    host, port = args.listen_target.rsplit(':', 1) if ":" in args.listen_target else ("0.0.0.0", args.listen_target)
+    # ИСПРАВЛЕНО: Прямая распаковка готового кортежа из валидатора без дублирования rsplit
+    host, port = args.listen_target
     
-    try: asyncio.run(main(host, int(port)))
+    try: asyncio.run(main(host, port))
     except KeyboardInterrupt: pass
