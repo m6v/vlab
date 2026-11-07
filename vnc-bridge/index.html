@@ -72,7 +72,7 @@
 
                 console.log(`[VNC] Подключение к стриму: ${wsUrl}`);
 
-                // Добавляем focusOnClick: true в настройки noVNC
+                // Настройки noVNC без лишних клиентских пингов
                 const rfb = new mod.default(targetElement, wsUrl, {
                     wsProtocols: ['binary'],
                     focusOnClick: true

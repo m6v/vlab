@@ -86,9 +86,9 @@ func main() {
 	server := &http.Server{
 		Addr:         listenAddr,
 		Handler:      mux,
-		ReadTimeout:  15 * time.Minute,
-		WriteTimeout: 60 * time.Minute,
-		IdleTimeout:  120 * time.Minute,
+		ReadTimeout:  0,
+		WriteTimeout: 0,
+		IdleTimeout:  3 * time.Minute,
 	}
 
 	if err := server.ListenAndServe(); err != nil {
@@ -144,27 +144,64 @@ func handleWebSocketProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	defer closeOnce.Do(closeConnections)
 
-	_ = wsConn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	// Настройка таймаутов
+	wsPingPeriod := 15 * time.Second   // Частота пинга от сервера
+	wsReadTimeout := 60 * time.Second  // Время ожидания Pong (должно быть больше периода пинга)
+	wsWriteTimeout := 10 * time.Second // Время на отправку пакета
+
+	// Увеличение буфера чтения для стабильности фонового режима
+	wsConn.SetReadLimit(65536)
+
+	// Инициализация начального дедлайна чтения
+	_ = wsConn.SetReadDeadline(time.Now().Add(wsReadTimeout))
+	
+	// PongHandler каждые 15 сек сервер шлет пинг -> ОС клиента шлет ответ -> ReadMessage() 
+	// под капотом высвобождает этот Pong -> срабатывает этот обработчик и двигает дедлайн.
 	wsConn.SetPongHandler(func(string) error {
-		_ = wsConn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		_ = wsConn.SetReadDeadline(time.Now().Add(wsReadTimeout))
 		return nil
 	})
 
 	var wsMutex sync.Mutex
 
-	// Inbound pipeline: Browser (WS) -> Virtual Machine (TCP)
+	// ГОРУТИНА 1: Фоновый пингер (Heartbeat)
+	go func() {
+		ticker := time.NewTicker(wsPingPeriod)
+		defer ticker.Stop()
+		defer closeOnce.Do(closeConnections)
+
+		for {
+			select {
+			case <-ticker.C:
+				wsMutex.Lock()
+				_ = wsConn.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
+				err := wsConn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(wsWriteTimeout))
+				wsMutex.Unlock()
+				
+				if err != nil {
+					log.Printf("[INFO] [%s] Failed to send server heartbeat: %v", token, err)
+					return
+				}
+			}
+		}
+	}()
+
+	// ГОРУТИНА 2: Inbound pipeline (Browser -> VM)
 	go func() {
 		defer closeOnce.Do(closeConnections)
 		for {
-			msgType, reader, err := wsConn.NextReader()
+			// ReadMessage работает непрерывно, чтобы вылавливать системные Pong фреймы
+			msgType, payload, err := wsConn.ReadMessage()
 			if err != nil {
 				log.Printf("[INFO] [%s] Inbound WebSocket channel closed: %v", token, err)
 				return
 			}
-			_ = wsConn.SetReadDeadline(time.Now().Add(60 * time.Second))
+			
+			// Продление дедлайна, если пользователь прислал реальные бинарные данные
+			_ = wsConn.SetReadDeadline(time.Now().Add(wsReadTimeout))
 
-			if msgType == websocket.BinaryMessage {
-				_, err = io.Copy(tcpConn, reader)
+			if msgType == websocket.BinaryMessage && len(payload) > 0 {
+				_, err = tcpConn.Write(payload)
 				if err != nil {
 					log.Printf("[WARNING] [%s] Failed to write inbound data frame payload to TCP socket: %v", token, err)
 					return
@@ -173,7 +210,7 @@ func handleWebSocketProxy(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// Outbound pipeline: Virtual Machine (TCP) -> Browser (WS)
+	// ОСНОВНОЙ ПОТОК: Outbound pipeline (VM -> Browser)
 	buf := make([]byte, 65536)
 	for {
 		n, err := tcpConn.Read(buf)
@@ -188,6 +225,7 @@ func handleWebSocketProxy(w http.ResponseWriter, r *http.Request) {
 
 		if n > 0 {
 			wsMutex.Lock()
+			_ = wsConn.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
 			err = wsConn.WriteMessage(websocket.BinaryMessage, buf[:n])
 			wsMutex.Unlock()
 			if err != nil {
