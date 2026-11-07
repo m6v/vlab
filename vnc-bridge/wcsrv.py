@@ -5,50 +5,47 @@ import socket
 import subprocess
 import logging
 import argparse
+import re
 from urllib.parse import urlparse, parse_qs
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 TEMPLATE_PATH = "index.html"
+# Регулярное выражение для безопасной валидации имени ВМ
+VM_NAME_SAFE_REGEXP = re.compile(r'^[a-zA-Z0-9_-]+$')
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s', datefmt='%Y/%m/%d %H:%M:%S')
 
 def get_vnc_address(vm_name, tokens_path):
-    """Извлекает адрес VNC (host:port) из tokens.conf"""
-    if not os.path.exists(tokens_path):
-        logging.error(f"Configuration file not found: {tokens_path}")
+    """Извлекает адрес VNC (host:port) из tokens.conf по строгому совпадению имени"""
+    if not os.path.exists(tokens_path) or not os.access(tokens_path, os.R_OK):
+        logging.error(f"Configuration file not found or not readable: {tokens_path}")
         return None
 
     with open(tokens_path, 'r', encoding='utf-8') as f:
         for line in f:
             line = line.strip()
-            # Пропуск пустых строк и комментариев
             if not line or line.startswith('#'):
                 continue
 
-            # Проверка, начинается ли строка с имени ВМ и двоеточия
-            if line.startswith(f"{vm_name}:"):
-                # Разделение строго по первому двоеточию
-                parts = line.split(':', 1)
-                if len(parts) == 2:
-                    return parts[1].strip() # Возврат чистой строки "127.0.0.1:5912"
+            if ':' in line:
+                name, addr = line.split(':', 1)
+                if name.strip() == vm_name:
+                    return addr.strip()
     return None
 
-def is_vm_running(vm_name, tokens_path):
-    """Проверяет статус ВМ"""
-    addr = get_vnc_address(vm_name, tokens_path)
-    if not addr or ':' not in addr:
+def is_vm_running(vnc_addr):
+    """Проверяет статус ВМ по доступности её VNC-порта"""
+    if not vnc_addr or ':' not in vnc_addr:
         return False
     try:
-        host, port_str = addr.split(':')
-        # Попытка TCP-рукопожатия, если порт закрыт, выбросит исключение и вернет False
-        with socket.create_connection((host, int(port_str)), timeout=1.0):
+        host, port_str = vnc_addr.split(':')
+        with socket.create_connection((host, int(port_str)), timeout=0.5):
             return True
     except Exception:
-        # Любой сбой (connection refused, timeout) означает, что ВМ выключена
         return False
 
 class VLabManagementHandler(BaseHTTPRequestHandler):
-    """Многопоточный контроллер управления"""
+    """Многопоточный контроллер управления веб-консолью"""
     def log_message(self, format, *args):
         logging.debug(format % args)
 
@@ -59,12 +56,19 @@ class VLabManagementHandler(BaseHTTPRequestHandler):
         vms = query_params.get("vm", [""])
         vm_name = vms[0].strip() if vms and vms[0] else ""
         tokens_path = self.server.tokens_path
+        webroot = self.server.webroot
 
-        # API ЭНДПОИНТ: Запуск ВМ от имени активного графического пользователя
+        # Защитная валидация имени ВМ для всех эндпоинтов
+        if vm_name and not VM_NAME_SAFE_REGEXP.match(vm_name):
+            logging.warning(f"Rejected malicious or invalid VM name format: '{vm_name}'")
+            self.send_error(400, "Bad Request: Invalid VM name format")
+            return
+
+        # API ЭНДПОИНТ: Запуск ВМ
         if parsed_url.path == "/start" and vm_name:
-            logging.info(f"Starting {vm_name}...")
+            logging.info(f"Starting virtual machine: {vm_name}...")
             cmd = ["/usr/local/bin/vmctrl", "start", vm_name]
-            subprocess.Popen(cmd)
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             self.send_response(200)
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
@@ -73,7 +77,9 @@ class VLabManagementHandler(BaseHTTPRequestHandler):
 
         # API ЭНДПОИНТ: Текстовый статус для фронтенда
         if parsed_url.path == "/status":
-            status = "RUNNING" if is_vm_running(vm_name, tokens_path) else "STOPPED"
+            vnc_addr = get_vnc_address(vm_name, tokens_path) if vm_name else None
+            status = "RUNNING" if is_vm_running(vnc_addr) else "STOPPED"
+            
             self.send_response(200)
             self.send_header("Content-Type", "text/plain")
             self.send_header("Access-Control-Allow-Origin", "*")
@@ -81,13 +87,14 @@ class VLabManagementHandler(BaseHTTPRequestHandler):
             self.wfile.write(status.encode())
             return
 
-        # UI ЭНДПОИНТ: Раздача фавикон
+        # UI ЭНДПОИНТ: Раздача фавикон (ищет в подкаталоге images внутри webroot)
         if parsed_url.path == "/favicon.ico":
-            icons_dir = "/usr/share/pixmaps"
+            icons_dir = os.path.join(webroot, "images")
             icon_path = os.path.join(icons_dir, f"{vm_name}.png")
             if not vm_name or not os.path.exists(icon_path):
                 icon_path = os.path.join(icons_dir, "default.png")
             if not os.path.exists(icon_path):
+                # Если дефолтной иконки нет в webroot, отдаем пустой ответ без ошибки
                 self.send_response(204)
                 self.end_headers()
                 return
@@ -125,9 +132,10 @@ class VLabManagementHandler(BaseHTTPRequestHandler):
 
 class CleanThreadingHTTPServer(ThreadingHTTPServer):
     """Кастомный сервер, сохраняющий порты и пути в своем контексте"""
-    def __init__(self, server_address, RequestHandlerClass, proxy_port, tokens_path):
+    def __init__(self, server_address, RequestHandlerClass, proxy_port, tokens_path, webroot):
         self.proxy_port = proxy_port
         self.tokens_path = tokens_path
+        self.webroot = webroot  # Контекстный путь к каталогу noVNC
         super().__init__(server_address, RequestHandlerClass)
 
     def handle_error(self, request, client_address):
@@ -138,40 +146,41 @@ class CleanThreadingHTTPServer(ThreadingHTTPServer):
         super().handle_error(request, client_address)
 
 def valid_listen_address(netloc):
-    """Валидирует формат HOST:PORT и возвращает кортеж (host, port)."""
     try:
         host, port_str = netloc.rsplit(':', 1)
         port = int(port_str)
-        # Валидация диапазона порта
         if not (1 <= port <= 65535):
             raise ValueError
-        
-        # Валидация хоста
-        socket.gethostbyname(host)
-        
-        # Возврат готового кортежа для сервера
         return (host, port) 
-    except (ValueError, socket.error):
+    except ValueError:
         raise argparse.ArgumentTypeError(
             f"'{netloc}' is not a valid listen address. Expected 'HOST:PORT' (e.g., 0.0.0.0:8081)"
         )
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Web Console Server - Universal lightweight web interface and gateway for VNC/RFB streams.")
-    parser.add_argument("listen", nargs="?", type=valid_listen_address, default="0.0.0.0:8081", help="Listen address and port (e.g. 0.0.0.0:8081)")
+    parser = argparse.ArgumentParser(description="Web Console Server")
+    parser.add_argument("listen", nargs="?", type=valid_listen_address, default="0.0.0.0:8081", help="Listen address and port (default: 0.0.0.0:8081)")
     parser.add_argument("--proxy-port", type=int, default=8080, help="VNC proxy runtime port")
-    parser.add_argument("--tokens", default="/srv/qemu/tokens.conf", help="Path to tokens configuration file")
+    parser.add_argument("--token-source", default="/srv/qemu/tokens.conf", help="Path to tokens configuration file (default: /srv/qemu/tokens.conf)")
+    parser.add_argument("--webroot", default="/usr/share/novnc/", help="Path to noVNC static web directory (default: /usr/share/novnc/)")
     args = parser.parse_args()
 
     host, port = args.listen
 
-    # Валидация шаблона
     if not os.path.exists(TEMPLATE_PATH):
         logging.critical(f"Required UI template file component is missing: {TEMPLATE_PATH}")
         sys.exit(1)
 
-    logging.info(f"Management infrastructure successfully started on {host}:{port} with tokens configuration file source: {args.tokens}")
-    server = CleanThreadingHTTPServer((host, port), VLabManagementHandler, args.proxy_port, args.tokens)
+    # Валидация существования каталога webroot
+    if not os.path.exists(args.webroot) or not os.path.isdir(args.webroot):
+        logging.fatal(f"[FATAL] Specified noVNC webroot directory '{args.webroot}' does not exist or is not a directory")
+        sys.exit(1)
+
+    logging.info(f"Management infrastructure successfully started on {host}:{port}")
+    logging.info(f"Using noVNC webroot source: {args.webroot}")
+    
+    # Передаем args.webroot в инициализацию сервера
+    server = CleanThreadingHTTPServer((host, port), VLabManagementHandler, args.proxy_port, args.token_source, args.webroot)
 
     try:
         server.serve_forever()
