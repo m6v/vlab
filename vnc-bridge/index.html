@@ -3,73 +3,120 @@
 <head>
     <meta charset="UTF-8">
     <title>{{.VMName}}</title>
+    <!-- Статический декларативный тег фавиконки по умолчанию -->
+    <link id="dynamic-favicon" rel="icon" type="image/png" href="/favicon.ico">
     <style>
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; font-family: sans-serif; background-color: #f5f7fa; }
+        body, html { 
+            margin: 0; padding: 0; width: 100%; height: 100%; 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+            background-color: #f5f7fa; color: #334155; 
+        }
         .container { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; text-align: center; }
-        .card { background: #ffffff; padding: 40px; border-radius: 6px; border: 1px solid #e2e8f0; }
-        .btn-start { background: #2563eb; color: #ffffff; border: none; padding: 12px 32px; font-size: 15px; border-radius: 4px; cursor: pointer; }
+        .card { background: #ffffff; padding: 40px 50px; border-radius: 6px; border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+        h1 { margin-top: 0; margin-bottom: 25px; font-size: 20px; font-weight: 500; color: #1e293b; }
+        .btn-start { background: #2563eb; color: #ffffff; border: none; padding: 12px 32px; font-size: 15px; font-weight: 500; border-radius: 4px; cursor: pointer; transition: background-color 0.15s ease; }
+        .btn-start:hover { background: #1d4ed8; }
+        .btn-start:disabled { background: #cbd5e1; color: #64748b; cursor: not-allowed; }
         #vnc-container { width: 100%; height: 100%; background: #000000; display: none; }
         #offline-ui { display: none; }
     </style>
 </head>
 <body>
+
     <div id="vnc-container"></div>
-    <div id="offline-ui" class="container"><div class="card"><h1>ВМ {{.VMName}} выключена</h1><button id="startBtn" class="btn-start" onclick="launchVM()">Включить</button></div></div>
+
+    <div id="offline-ui" class="container">
+        <div class="card">
+            <h1>Виртуальная машина {{.VMName}} выключена</h1>
+            <button id="startBtn" class="btn-start" onclick="VLabConsole.launchVM()">Включить</button>
+        </div>
+    </div>
 
     <script type="text/javascript">
-        const currentVM = "{{.VMName}}";
-        const proxyPort = "{{.ProxyPort}}";
-        const moduleUrl = `http://${window.location.hostname}:${window.location.port}/novnc/core/rfb.js`;
+        // Изолированное пространство имен (Namespace Pattern) для предотвращения коллизий
+        const VLabConsole = {
+            vmName: "{{.VMName}}",
+            proxyPort: "{{.ProxyPort}}",
+            moduleUrl: `http://${window.location.hostname}:${window.location.port}/novnc/core/rfb.js`,
 
-        window.addEventListener('load', () => {
-            fetch(`/status?vm=${encodeURIComponent(currentVM)}`).then(res => res.text()).then(status => {
-                if (status.trim() === "RUNNING") {
-                    document.getElementById('vnc-container').style.display = 'block';
-                    initVNC();
-                } else {
-                    document.getElementById('offline-ui').style.display = 'flex';
+            init() {
+                this.setupFavicon();
+                this.checkInitialStatus();
+            },
+
+            setupFavicon() {
+                const favicon = document.getElementById('dynamic-favicon');
+                if (favicon && this.vmName) {
+                    const cacheBuster = new Date().getTime();
+                    favicon.href = `/favicon.ico?vm=${encodeURIComponent(this.vmName)}&v=${cacheBuster}`;
                 }
-            });
-        });
+            },
 
-        function initVNC() {
-            import(moduleUrl).then((mod) => {
-                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                const wsUrl = `${protocol}//${window.location.hostname}:${proxyPort}/ws?token=${encodeURIComponent(currentVM)}`;
-                
+            checkInitialStatus() {
+                fetch(`/status?vm=${encodeURIComponent(this.vmName)}`)
+                    .then(res => res.text())
+                    .then(status => {
+                        if (status.trim() === "RUNNING") {
+                            this.showVNC();
+                        } else {
+                            document.getElementById('offline-ui').style.display = 'flex';
+                        }
+                    })
+                    .catch(() => {
+                        document.getElementById('offline-ui').style.display = 'flex';
+                    });
+            },
+
+            showVNC() {
+                document.getElementById('offline-ui').style.display = 'none';
                 const container = document.getElementById('vnc-container');
-                const rfb = new mod.default(container, wsUrl, { 
-                    wsProtocols: ['binary'],
-                    focusOnClick: true
-                });
-                
-                rfb.scaleViewport = true;
+                container.style.display = 'block';
+                this.connectVNC(container);
+            },
 
-                // АВТОФОКУС: Как только сессия успешно подключится, принудительно захватываем фокус ввода
-                rfb.addEventListener('connect', () => {
-                    setTimeout(() => {
-                        rfb.focus();
-                        console.log(`[VNC] Фокус ввода автоматически захвачен для ${currentVM}`);
-                    }, 150);
-                });
+            connectVNC(targetElement) {
+                import(this.moduleUrl).then((mod) => {
+                    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                    const wsUrl = `${protocol}//${window.location.hostname}:${this.proxyPort}/ws?token=${encodeURIComponent(this.vmName)}`;
 
-            });
-        }
+                    const rfb = new mod.default(targetElement, wsUrl, { 
+                        wsProtocols: ['binary'],
+                        focusOnClick: true,
+                        pingInterval: 10 // Защита от засыпания сессии
+                    });
 
-        function pollStatus() {
-            fetch(`/status?vm=${encodeURIComponent(currentVM)}`).then(res => res.text()).then(status => {
-                if (status.trim() === "RUNNING") {
-                    document.getElementById('offline-ui').style.display = 'none';
-                    document.getElementById('vnc-container').style.display = 'block';
-                    initVNC();
-                } else { setTimeout(pollStatus, 500); }
-            });
-        }
+                    rfb.scaleViewport = true;
 
-        function launchVM() {
-            document.getElementById('startBtn').disabled = true;
-            fetch(`/start?vm=${encodeURIComponent(currentVM)}`).then(res => { if (res.ok) pollStatus(); });
-        }
+                    // Автофокус ввода при подключении фреймбуфера
+                    rfb.addEventListener('connect', () => {
+                        setTimeout(() => rfb.focus(), 150);
+                    });
+                }).catch(err => console.error("[VNC] Failed to load rfb.js:", err));
+            },
+
+            pollStatus() {
+                fetch(`/status?vm=${encodeURIComponent(this.vmName)}`)
+                    .then(res => res.text())
+                    .then(status => {
+                        if (status.trim() === "RUNNING") {
+                            this.showVNC();
+                        } else {
+                            setTimeout(() => this.pollStatus(), 500);
+                        }
+                    });
+            },
+
+            launchVM() {
+                const btn = document.getElementById('startBtn');
+                btn.disabled = true;
+                btn.innerText = 'Запуск...';
+                fetch(`/start?vm=${encodeURIComponent(this.vmName)}`)
+                    .then(res => { if (res.ok) this.pollStatus(); });
+            }
+        };
+
+        // Запуск логики строго после полной готовности DOM (Жизненный цикл W3C)
+        window.addEventListener('DOMContentLoaded', () => VLabConsole.init());
     </script>
 </body>
 </html>
