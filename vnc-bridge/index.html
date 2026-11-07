@@ -4,158 +4,71 @@
     <meta charset="UTF-8">
     <title>{{.VMName}}</title>
     <style>
-        body, html { 
-            margin: 0; padding: 0; width: 100%; height: 100%; 
-            font-family: Ubuntu, "Liberation Sans", "DejaVu Sans", sans-serif; 
-            background-color: #f5f7fa; color: #334155; 
-        }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; font-family: sans-serif; background-color: #f5f7fa; }
         .container { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; text-align: center; }
-        .card { background: #ffffff; padding: 40px 50px; border-radius: 6px; border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05); }
-        h1 { margin-top: 0; margin-bottom: 25px; font-size: 20px; font-weight: 500; color: #1e293b; }
-        .btn-start { background: #2563eb; color: #ffffff; border: none; padding: 12px 32px; font-size: 15px; font-weight: 500; border-radius: 4px; cursor: pointer; transition: background-color 0.15s ease; }
-        .btn-start:hover { background: #1d4ed8; }
-        .btn-start:disabled { background: #cbd5e1; color: #64748b; cursor: not-allowed; }
+        .card { background: #ffffff; padding: 40px; border-radius: 6px; border: 1px solid #e2e8f0; }
+        .btn-start { background: #2563eb; color: #ffffff; border: none; padding: 12px 32px; font-size: 15px; border-radius: 4px; cursor: pointer; }
         #vnc-container { width: 100%; height: 100%; background: #000000; display: none; }
         #offline-ui { display: none; }
     </style>
+</head>
+<body>
+    <div id="vnc-container"></div>
+    <div id="offline-ui" class="container"><div class="card"><h1>ВМ {{.VMName}} выключена</h1><button id="startBtn" class="btn-start" onclick="launchVM()">Включить</button></div></div>
+
     <script type="text/javascript">
         const currentVM = "{{.VMName}}";
         const proxyPort = "{{.ProxyPort}}";
-
-        // Абсолютно чистый относительный путь к текущему Python-серверу (порт 8081) [1.4]
-        const fav = document.createElement('link');
-        fav.rel = 'icon';
-        fav.type = 'image/png';
-        fav.href = `/favicon.ico?vm=${encodeURIComponent(currentVM)}`;
-        document.head.appendChild(fav);
-    </script>
-</head>
-<body>
-
-    <div id="vnc-container"></div>
-
-    <div id="offline-ui" class="container">
-        <div class="card">
-            <h1>Виртуальная машина {{.VMName}} выключена</h1>
-            <button id="startBtn" class="btn-start" onclick="launchVM()">Включить</button>
-        </div>
-    </div>
-
-    <script type="text/javascript">
-        const moduleUrl = `http://${window.location.hostname}:${proxyPort}/novnc/core/rfb.js`;
+        const moduleUrl = `http://${window.location.hostname}:${window.location.port}/novnc/core/rfb.js`;
 
         window.addEventListener('load', () => {
-            fetch(`/status?vm=${encodeURIComponent(currentVM)}`)
-                .then(res => res.text())
-                .then(status => {
-                    console.log(`Status for ${currentVM}:`, status);
-                    if (status.trim() === "RUNNING") {
-                        const container = document.getElementById('vnc-container');
-                        container.innerHTML = ""; 
-                        container.style.display = 'block';
-
-                        initVNC(container);
-                    } else {
-                        document.getElementById('offline-ui').style.display = 'flex';
-                    }
-                })
-                .catch(err => {
-                    console.error("Status check failed:", err);
+            fetch(`/status?vm=${encodeURIComponent(currentVM)}`).then(res => res.text()).then(status => {
+                if (status.trim() === "RUNNING") {
+                    document.getElementById('vnc-container').style.display = 'block';
+                    initVNC();
+                } else {
                     document.getElementById('offline-ui').style.display = 'flex';
-                });
+                }
+            });
         });
 
-        function initVNC(targetElement) {
+        function initVNC() {
             import(moduleUrl).then((mod) => {
                 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
                 const wsUrl = `${protocol}//${window.location.hostname}:${proxyPort}/ws?token=${encodeURIComponent(currentVM)}`;
-
-                console.log(`[VNC] Подключение к стриму: ${wsUrl}`);
-
-                // Настройки noVNC без лишних клиентских пингов
-                const rfb = new mod.default(targetElement, wsUrl, {
+                
+                const container = document.getElementById('vnc-container');
+                const rfb = new mod.default(container, wsUrl, { 
                     wsProtocols: ['binary'],
                     focusOnClick: true
                 });
-
+                
                 rfb.scaleViewport = true;
-                rfb.resizeSession = false;
 
-                // Автоматически захватываем фокус клавиатуры и мыши сразу после инициализации
-                setTimeout(() => {
-                    rfb.focus();
-                    console.log("[VNC] Фокус ввода успешно захвачен");
-                }, 100);
-
-                rfb.addEventListener('disconnect', (e) => {
-                    console.log("[VNC] Сессия закрыта:", e);
+                // АВТОФОКУС: Как только сессия успешно подключится, принудительно захватываем фокус ввода
+                rfb.addEventListener('connect', () => {
+                    setTimeout(() => {
+                        rfb.focus();
+                        console.log(`[VNC] Фокус ввода автоматически захвачен для ${currentVM}`);
+                    }, 150);
                 });
-            }).catch(err => {
-                console.error("[VNC] Ошибка загрузки компонента rfb.js:", err);
+
             });
         }
 
-        // Новая функция умного опроса статуса
-        function pollStatus(attempts = 0) {
-            // Если машина не запустилась за 10 секунд (20 попыток), прекращаем опрос
-            if (attempts > 20) {
-                alert('Виртуальная машина запускается слишком долго. Попробуйте обновить страницу вручную.');
-                const btn = document.getElementById('startBtn');
-                btn.disabled = false;
-                btn.innerText = 'Включить';
-                return;
-            }
-
-            fetch(`/status?vm=${encodeURIComponent(currentVM)}`)
-                .then(res => res.text())
-                .then(status => {
-                    if (status.trim() === "RUNNING") {
-                        console.log(`[POLL] ВМ ${currentVM} успешно запущена на попытке ${attempts}`);
-
-                        // Скрываем плашку выключенной ВМ
-                        document.getElementById('offline-ui').style.display = 'none';
-
-                        // Включаем контейнер VNC
-                        const container = document.getElementById('vnc-container');
-                        container.innerHTML = "";
-                        container.style.display = 'block';
-
-                        // Подключаемся
-                        initVNC(container);
-                    } else {
-                        // Если все еще STOPPED, ждем 500мс и проверяем снова
-                        setTimeout(() => pollStatus(attempts + 1), 500);
-                    }
-                })
-                .catch(err => {
-                    console.error("[POLL] Ошибка проверки статуса:", err);
-                    setTimeout(() => pollStatus(attempts + 1), 500);
-                });
+        function pollStatus() {
+            fetch(`/status?vm=${encodeURIComponent(currentVM)}`).then(res => res.text()).then(status => {
+                if (status.trim() === "RUNNING") {
+                    document.getElementById('offline-ui').style.display = 'none';
+                    document.getElementById('vnc-container').style.display = 'block';
+                    initVNC();
+                } else { setTimeout(pollStatus, 500); }
+            });
         }
 
-        // Измененная функция клика по кнопке
         function launchVM() {
-            const btn = document.getElementById('startBtn');
-            btn.disabled = true;
-            btn.innerText = 'Запуск...';
-
-            fetch(`/start?vm=${encodeURIComponent(currentVM)}`)
-                .then(res => {
-                    if (res.ok) {
-                        console.log(`[START] Сигнал на запуск отправлен. Начинаем опрос...`);
-                        // Начинаем динамический опрос вместо перезагрузки страницы
-                        pollStatus();
-                    } else {
-                        alert('Не удалось запустить ВМ');
-                        btn.disabled = false;
-                        btn.innerText = 'Включить';
-                    }
-                })
-                .catch(err => {
-                    alert('Ошибка сети: ' + err);
-                    btn.disabled = false;
-                    btn.innerText = 'Включить';
-                });
+            document.getElementById('startBtn').disabled = true;
+            fetch(`/start?vm=${encodeURIComponent(currentVM)}`).then(res => { if (res.ok) pollStatus(); });
         }
     </script>
 </body>
