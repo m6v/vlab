@@ -1,5 +1,0 @@
-#!/bin/sh
-set -e
-systemctl stop wcsrv.service vnc2ws.service || true
-systemctl disable wcsrv.service vnc2ws.service || true
-exit 0

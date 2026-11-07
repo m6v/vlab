@@ -1,7 +1,0 @@
-#!/bin/sh
-set -e
-chmod +x /srv/qemu/wcsrv /srv/qemu/vnc2ws
-systemctl daemon-reload
-systemctl enable wcsrv.service vnc2ws.service
-systemctl restart wcsrv.service vnc2ws.service
-exit 0

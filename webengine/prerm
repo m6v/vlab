@@ -1,0 +1,5 @@
+#!/bin/sh
+set -e
+systemctl stop vnc2ws-bridge.service vnc2ws-server.service || true
+systemctl disable vnc2ws-bridge.service vnc2ws-server.service || true
+exit 0
