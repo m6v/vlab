@@ -94,7 +94,7 @@ class VLabManagementHandler(BaseHTTPRequestHandler):
             self.wfile.write(icon_data)
             return
 
-        # UI: Корректная раздача статических файлов noVNC с MIME-типами
+        # UI: Раздача статических файлов noVNC с MIME-типами
         if parsed_url.path.startswith("/novnc/"):
             relative_path = parsed_url.path.replace("/novnc/", "", 1)
             file_path = os.path.normpath(os.path.join(webroot, relative_path))
@@ -118,7 +118,7 @@ class VLabManagementHandler(BaseHTTPRequestHandler):
             self.wfile.write(file_data)
             return
 
-        # UI: Выдача скомпилированной главной страницы интерфейса
+        # UI: Выдача главной страницы интерфейса
         if parsed_url.path == "/":
             if not vm_name or not get_vnc_address(vm_name, tokens_path):
                 self.send_error(404, f"VM '{vm_name}' not registered")

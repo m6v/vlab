@@ -13,7 +13,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(me
 
 TOKEN_REGEXP = re.compile(r'^([a-zA-Z0-9_-]+):\s*([0-9.]+):(\d+)')
 
-# Глобальная переменная для пути к файлу конфигурации токенов
+# Путь к файлу конфигурации токенов
 TOKENS_PATH = ""
 
 def get_target_addr(token):
@@ -36,7 +36,7 @@ async def handler(websocket, path):
     parsed_url = urlparse(path)
     query_params = parse_qs(parsed_url.query)
     
-    # Токен извлекается строго как строка
+    # Извлечение токена как строки
     token_list = query_params.get('token', query_params.get('path', []))
     token = token_list[0] if token_list else None
     
@@ -59,7 +59,7 @@ async def handler(websocket, path):
             asyncio.open_connection(host, port), 
             timeout=5.0
         )
-        logging.info(f"[{token}] TCP линк с ВМ успешно установлен")
+        logging.info(f"[{token}] TCP соединение с виртуальной машиной успешно установлено")
     except Exception as e:
         logging.error(f"[{token}] Ошибка подключения к TCP VNC: {e}")
         return
@@ -113,7 +113,7 @@ async def handler(websocket, path):
             while not is_closed:
                 data = await reader.read(65536)
                 if not data:
-                    logging.info(f"[{token}] Виртуальная машина штатно закрыла TCP (EOF)")
+                    logging.info(f"[{token}] Виртуальная машина штатно закрыла TCP соединение")
                     break
                 await asyncio.wait_for(websocket.send(data), timeout=10.0)
         except Exception as e:
@@ -145,7 +145,7 @@ async def main(listen_host, listen_port):
         subprotocols=["binary"],
         process_request=modify_handshake_headers
     ):
-        logging.info(f"Python VNC to WebSocket bridge initialized on {listen_host}:{listen_port} (Astra Legacy Mode)")
+        logging.info(f"VNC to WebSocket bridge initialized on {listen_host}:{listen_port}")
         await asyncio.Event().wait()
 
 
