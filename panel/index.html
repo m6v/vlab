@@ -219,10 +219,9 @@
                 if (!response.ok) return;
                 const states = await response.json();
                 
+                // 1. Перекрашиваем виртуалки online/offline в DOM
                 Object.entries(states).forEach(([stateKey, isOnline]) => {
                     const [ip, token] = stateKey.split(':', 2);
-                    
-                    // Воспроизводим хэш-UID для точечного перекрашивания элемента в DOM
                     const targetUid = StringToHash(`${ip}-${token}`);
                     const el = document.getElementById(targetUid);
                     
@@ -232,10 +231,31 @@
                     }
                 });
 
+                // 2. ДЕКОРАТИВНОЕ УЛУЧШЕНИЕ: Умное управление состоянием папок хостов
                 document.querySelectorAll('.node-item').forEach(node => {
                     const sublist = node.nextElementSibling;
-                    if (sublist && sublist.querySelector('.online')) node.classList.add('node-active');
-                    else node.classList.remove('node-active');
+                    // Проверяем, есть ли внутри этой папки хотя бы одна работающая (online) машина
+                    const hasOnlineVms = sublist && sublist.querySelector('.online');
+                    
+                    if (hasOnlineVms) {
+                        // Если есть живые машины — красим папку в активный цвет
+                        node.classList.add('node-active');
+                        
+                        // АВТО-РАЗВЕРТЫВАНИЕ: Если папка была свернута, но в ней включили виртуалку — плавно раскрываем её [1.4]
+                        if (node.classList.contains('collapsed')) {
+                            node.classList.remove('collapsed');
+                            sublist.classList.remove('hidden');
+                        }
+                    } else {
+                        // Если все машины выключены — тушим подсветку папки
+                        node.classList.remove('node-active');
+                        
+                        // АВТО-СВОРАЧИВАНИЕ: Если папка пустая и еще не свернута — автоматически захлопываем её [1.4]
+                        if (!node.classList.contains('collapsed')) {
+                            node.classList.add('collapsed');
+                            sublist.classList.add('hidden');
+                        }
+                    }
                 });
             } catch (e) { console.error("Ошибка опроса статусов:", e); }
         }
