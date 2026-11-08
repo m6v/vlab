@@ -1,0 +1,16 @@
+[Unit]
+Description=Time Machine Daemon (Fake NTP Server)
+After=network.target
+
+[Service]
+Type=simple
+# Запуск скрипта с указанием адреса моста и смещения времени относительно текущего в секундах
+ExecStart=/usr/local/bin/timemachine.py --addr 10.10.0.254:123 --offset -216268800
+# Мягкое завершение процесса по сигналу SIGTERM
+KillMode=process
+# Автоматический перезапуск службы
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

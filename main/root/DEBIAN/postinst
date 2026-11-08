@@ -6,11 +6,11 @@ case "$1" in
         echo "Настройка пакета..."
         if ! nmcli connection show br0 >/dev/null 2>&1; then
             echo Создание моста br0...
-            nmcli connection add type bridge con-name br0 ifname br0 ipv4.method manual ipv4.addresses 10.10.0.253/24
+            nmcli connection add type bridge con-name br0 ifname br0 ipv4.method manual ipv4.addresses 10.10.0.254/24
         fi
 
         echo "Установка параметров моста br0..."
-        nmcli connection modify br0 bridge.stp no ipv4.method manual ipv4.addresses 10.10.0.253/24
+        nmcli connection modify br0 bridge.stp no ipv4.method manual ipv4.addresses 10.10.0.254/24
 
         if ! nmcli -t -f DEVICE connection show --active | grep -q "^br0$"; then
             echo "Поднятие моста br0..."
@@ -19,11 +19,11 @@ case "$1" in
 
         if ! nmcli connection show br1 >/dev/null 2>&1; then
             echo "Создание моста br1..."
-            nmcli connection add type bridge con-name br1 ifname br1 ipv4.method manual ipv4.addresses 10.0.0.253/24
+            nmcli connection add type bridge con-name br1 ifname br1 ipv4.method manual ipv4.addresses 10.0.0.254/24
         fi
 
         echo "Установка параметров моста br1..."
-        nmcli connection modify br1 bridge.stp no ipv4.method manual ipv4.addresses 10.0.0.253/24
+        nmcli connection modify br1 bridge.stp no ipv4.method manual ipv4.addresses 10.0.0.254/24
 
         if ! nmcli -t -f DEVICE connection show --active | grep -q "^br1$"; then
             echo "Поднятие моста br1..."

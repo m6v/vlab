@@ -1,0 +1,16 @@
+[Unit]
+Description=HTTP Daemon (Repository Server)
+After=network.target
+
+[Service]
+Type=simple
+# Запуск веб-сервера на порту 80 с привязкой к мосту br0
+ExecStart=/usr/bin/python3 -m http.server --directory /srv/repo --bind 10.10.0.254 80
+# Мягкое завершение процесса по SIGTERM
+KillMode=process
+# Автоматический перезапуск службы
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,35 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure)
+        echo "Настройка служб виртуального стенда..."
+
+        # Перезагружаем демон systemd, чтобы он увидел новые файлы юнитов
+        if [ -d /run/systemd/system ]; then
+            systemctl daemon-reload >/dev/null 2>&1 || true
+        fi
+
+        # Активируем автозапуск и запускаем службу vlab-httpd
+        echo "Активация vlab-httpd..."
+        systemctl enable vlab-httpd.service >/dev/null 2>&1 || true
+        systemctl restart vlab-httpd.service >/dev/null 2>&1 || true
+
+        # Активируем автозапуск и запускаем службу vlab-timemachine
+        echo "Активация vlab-timemachine..."
+        systemctl enable vlab-timemachine.service >/dev/null 2>&1 || true
+        systemctl restart vlab-timemachine.service >/dev/null 2>&1 || true
+
+        echo "Службы стенда успешно запущены!"
+    ;;
+
+    abort-upgrade|abort-remove|abort-deconfigure)
+    ;;
+
+    *)
+        echo "postinst вызван с неизвестным аргументом \`$1'" >&2
+        exit 1
+    ;;
+esac
+
+exit 0

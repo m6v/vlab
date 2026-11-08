@@ -1,4 +1,27 @@
-# Структура проекта
+# Кастомный NTP-сервер с возможностью использования смещения и HTTP-сервер
+
+Исходная реализация предполагала поднятие chrony внутри контейнера systemd-nspawn. Текущая реализация основана на кастомном мервере времени timemachine.py, который реализует протокол NTP и не требует каких-либо манипуляций с временем хоста.
+
+## Структура нового проекта
+```
+├── etc
+│   └── systemd
+│       └── system
+│           ├── vlab-httpd.service
+│           └── vlab-timemachine.service
+└── usr
+    └── local
+        └── bin
+            └── timemachine.py
+
+```
+Смещение времени относительно текущего задается в команде запуска внутри юнита vlab-timemachine.service. Для доступа к серверам из контейнера мосту должен быть присвоен ip-адрес, который указывается в аргументах запуска служб.
+Нужное смещение можно вычислить командой
+```bash
+echo $(( $(date -d "2020-01-01 00:00:00" +%s) - $(date +%s) ))
+```
+
+## Структура первоначального проекта
 
 Проект обеспечивает сборку контейнера в котором функционирует сервер времени chronyd и http-сервер для доступа к main и update-main репозиторию Astra Linux 1.7
 
@@ -37,7 +60,7 @@ python3 -m http.server 8000 --bind 10.10.0.253
 в виртуалке будет доступен по `10.10.0.253:8000`
 
 
-# Проверка настроек сети
+## Проверка настроек сети
 
 > Если сетевое взаимодействие контейнера с хостом и клиентами отсутствует, нужно проверить к какому мосту подключен интерфейс контейнера `vb-vlab-servers`
 Пример, когда вместо моста `virbr0` интерфейс подключился к мосту `br0`
@@ -59,7 +82,7 @@ Bridge=br0
     link/ether 6a:ef:48:dc:74:8b brd ff:ff:ff:ff:ff:ff link-netnsid 0
 ```
 
-# Поднятие моста
+## Поднятие моста
 Для тестирования работы контейнера без установленного libvirt необходимо поднять мост вручную с помощью команд
 ```
 # Создание моста
@@ -70,7 +93,7 @@ ip addr add 10.0.0.1/24 dev virbr0
 ip link delete virbr0
 ```
 
-## Установка сервера времени
+### Установка сервера времени
 ```bash
 sudo -i
 # Установка контейнера
@@ -83,7 +106,7 @@ apt install chrony
 exit
 ```
 
-# Проверка состояния службы
+## Проверка состояния службы
 ```
 sudo make status
 ● vlab-servers.service - Service Container for vlab
@@ -120,9 +143,9 @@ sudo make status
 Hint: Some lines were ellipsized, use -l to show in full.
 ```
 
-# Настройка клиентов
+## Настройка клиентов
 
-## Настройка конфигурации
+### Настройка конфигурации
 ```
 sudo -i
 apt install chrony
@@ -149,42 +172,8 @@ echo "server 10.0.0.254 prefer iburst" >> "$CONF_PATH"
 systemctl restart chrony
 ```
 
-## Принудительное обновление времени
+### Принудительное обновление времени
 ```
 chronyc -a makestep
 ```
 
-# Альтернативный вариант
-
-Выполнить на хосте
-```
-sudo -i
-apt install chrony
-# Останавливаем системный chrony
-sudo systemctl stop chrony
-# Полностью отключаем его автозапуск при загрузке системы
-sudo systemctl disable chrony
-
-sudo cat <<EOF > /etc/chrony/chrony-fake.conf
-local stratum 10
-allow 10.10.0.0/24
-bindaddress 10.10.0.253
-port 123
-makestep 1 -1
-EOF
-
-# Запуск в изолированном пространстве имен времени с фейковым временем
-unshare --time --fork bash -c "date -s '2020-01-01 12:00:00' && chronyd -d -f /etc/chrony/chrony-fake.conf"
-```
-
-Выполнить в виртуальной машине
-```
-sudo -i
-apt install chrony
-# Закомментировать в /etc/chrony/chrony.conf все pool и server
-echo "server 10.10.0.253 prefer iburst" >> /etc/chrony/chrony.conf
-
-systemctl restart chrony
-chronyc -a makestep
-
-```

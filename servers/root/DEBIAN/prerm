@@ -1,0 +1,31 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    remove|deconfigure)
+        echo "Остановка и отключение служб виртуального стенда перед удалением..."
+
+        # Останавливаем и отключаем vlab-timemachine
+        if systemctl is-active --quiet vlab-timemachine.service; then
+            systemctl stop vlab-timemachine.service >/dev/null 2>&1 || true
+        fi
+        systemctl disable vlab-timemachine.service >/dev/null 2>&1 || true
+
+        # Останавливаем и отключаем vlab-httpd
+        if systemctl is-active --quiet vlab-httpd.service; then
+            systemctl stop vlab-httpd.service >/dev/null 2>&1 || true
+        fi
+        systemctl disable vlab-httpd.service >/dev/null 2>&1 || true
+    ;;
+
+    upgrade|failed-upgrade)
+        :
+    ;;
+
+    *)
+        echo "prerm вызван с неизвестным аргументом \`$1'" >&2
+        exit 1
+    ;;
+esac
+
+exit 0
