@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>УТК-СЗИ</title>
+    <link rel="icon" href="virt-manager.png" type="image/png">
+    <style>
+        :root {
+            color-scheme: light dark;
+            --bg-main: Canvas;
+            --pve-dark: CanvasText;
+            --border-color: ButtonBorder;
+            --sidebar-bg: ButtonFace;
+            --sidebar-hover: Highlight;
+            --pve-orange: AccentColor;      
+            --node-offline: GrayText;
+            --node-active: color-mix(in srgb, CanvasText 85%, transparent);
+            --vm-offline: GrayText;
+            --vm-online: var(--node-active); 
+            --bg-placeholder: Field;
+        }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            overflow: hidden;
+            font-family: system-ui, -apple-system, sans-serif;
+            background-color: var(--bg-main);
+            color: var(--pve-dark);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .top-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.5rem 1rem;
+            font-size: 1.25rem;
+            border-bottom: 3px solid var(--pve-orange);
+            background-color: var(--bg-main);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            font-weight: bold;
+            flex-shrink: 0;
+        }
+
+        .main-container {
+            display: flex;
+            flex: 1;
+            min-height: 0;
+        }
+
+        .sidebar {
+            width: 20rem; 
+            overflow-y: auto;
+            overflow-x: hidden;
+            user-select: none;
+            background-color: var(--sidebar-bg);
+            border-right: 1px solid var(--border-color);
+        }
+
+        .node-item, .vm-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            color: var(--node-offline);
+            white-space: nowrap !important;
+        }
+        
+        .node-item:hover, .vm-item:hover {
+            background-color: var(--sidebar-hover);
+            color: HighlightText;
+        }
+
+        .node-item::before, .vm-item::before {
+            font-size: 1.15rem;
+            opacity: 0.4; 
+        }
+        .node-item::before { content: "🗄️"; }
+        .vm-item::before { content: "🖥️"; }
+
+        .node-item.node-active { color: var(--node-active); }
+        .node-item.node-active::before { opacity: 1; }
+
+        .node-toggle {
+            width: 1rem;
+            font-size: 0.8rem;
+            transition: transform 0.15s ease;
+        }
+        .node-item.collapsed .node-toggle {
+            transform: rotate(-90deg);
+        }
+
+        .vm-sublist {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+        .vm-sublist.hidden {
+            display: none;
+        }
+
+        .vm-item {
+            padding-left: 2.5rem;
+            color: var(--vm-offline);
+        }
+        .vm-item.online { color: var(--vm-online); }
+        .vm-item.online::before { opacity: 1; }
+
+        .vm-item.active {
+            background-color: var(--pve-orange);
+            color: HighlightText !important;
+        }
+        .vm-item.active::before { opacity: 1; }
+
+        .content-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+
+        iframe {
+            flex: 1;
+            width: 100%;
+            height: 100%;
+            border: none;
+            display: none;
+        }
+
+        .placeholder-view {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            flex: 1;
+            background-color: var(--bg-placeholder);
+            color: var(--node-offline);
+        }
+        .placeholder-view h2 {
+            margin: 0 0 10px 0;
+            font-size: 1.5rem;
+            font-weight: 400;
+        }
+        .placeholder-view p {
+            margin: 0;
+            font-size: 1rem;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="top-bar">
+        <span>Панель инструктора УТК-СЗИ</span>
+    </div>
+
+    <div class="main-container">
+        <div class="sidebar">
+            <div id="pve-tree"></div>
+        </div>
+
+        <div class="content-area">
+            <div id="placeholder" class="placeholder-view">
+                <h2>Консоль не выбрана</h2>
+                <p>Выберите виртуальную машину из списка слева для подключения</p>
+            </div>
+            <iframe id="vnc-frame" sandbox="allow-scripts allow-same-origin allow-forms" allow="clipboard-read; clipboard-write"></iframe>
+        </div>
+    </div>
+
+    <script>
+        let selectedVmElement = null;
+        let configPorts = { pythonPort: 8000, websockifyPort: 8085 };
+
+        document.addEventListener('DOMContentLoaded', () => {
+            loadTreeData();
+            // Постоянный мониторинг статусов портов каждые 5 секунд
+            setInterval(loadTreeData, 5000);
+        });
+
+        async function loadTreeData() {
+            try {
+                const response = await fetch('/api/tokens');
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                
+                const data = await response.json();
+                if (data.config) configPorts = data.config;
+                if (data.tree) renderTree(data.tree);
+            } catch (error) {
+                console.error("[REST API] Ошибка обновления статусов дерева:", error);
+            }
+        }
+
+        function renderTree(treeData) {
+            const treeContainer = document.getElementById('pve-tree');
+            const collapsedStates = {};
+            
+            // Сохраняем состояние папок, чтобы они не захлопывались каждые 5 секунд
+            treeContainer.querySelectorAll('.node-item').forEach(node => {
+                collapsedStates[node.getAttribute('data-host')] = node.classList.contains('collapsed');
+            });
+
+            treeContainer.textContent = '';
+
+            // Обходим древовидную структуру: hostName — это "Хост 192.168.1.X"
+            Object.entries(treeData).forEach(([hostName, hostInfo]) => {
+                const hostBlock = document.createElement('div');
+                
+                // Создаем узел физического хоста (папку)
+                const nodeItem = document.createElement('div');
+                nodeItem.className = 'node-item';
+                nodeItem.setAttribute('data-host', hostName);
+                
+                const toggleSpan = document.createElement('span');
+                toggleSpan.className = 'node-toggle';
+                toggleSpan.textContent = '▼';
+                nodeItem.appendChild(toggleSpan);
+
+                const nameSpan = document.createElement('span');
+                nameSpan.textContent = hostName;
+                nodeItem.appendChild(nameSpan);
+
+                if (collapsedStates[hostName]) nodeItem.classList.add('collapsed');
+
+                // Создаем сублист (ветви) для виртуалок этого хоста
+                const vmSublist = document.createElement('ul');
+                vmSublist.className = 'vm-sublist';
+                if (collapsedStates[hostName]) vmSublist.classList.add('hidden');
+
+                let hostHasOnlineVm = false;
+
+                // Заполняем ветви виртуалками
+                hostInfo.vms.forEach(vm => {
+                    const vmLi = document.createElement('li');
+                    vmLi.className = 'vm-item';
+                    
+                    // Отображаем красивое имя токена (например, srv-szi)
+                    vmLi.textContent = vm.token;
+                    vmLi.setAttribute('data-token', vm.token);
+
+                    if (vm.status === 'online') {
+                        vmLi.classList.add('online');
+                        hostHasOnlineVm = true;
+                    }
+
+                    if (selectedVmElement && selectedVmElement.getAttribute('data-token') === vm.token) {
+                        vmLi.classList.add('active');
+                        selectedVmElement = vmLi;
+                    }
+
+                    // Клик ЛКМ запускает noVNC сессию
+                    vmLi.addEventListener('click', () => handleVmClick(vmLi));
+                    vmSublist.appendChild(vmLi);
+                });
+
+                if (hostHasOnlineVm) nodeItem.classList.add('node-active');
+
+                // Поведение папки при клике (свернуть/развернуть)
+                nodeItem.addEventListener('click', () => {
+                    nodeItem.classList.toggle('collapsed');
+                    vmSublist.classList.toggle('hidden');
+                });
+
+                hostBlock.appendChild(nodeItem);
+                hostBlock.appendChild(vmSublist);
+                treeContainer.appendChild(hostBlock);
+            });
+        }
+
+        function handleVmClick(vmElement) {
+            if (selectedVmElement) selectedVmElement.classList.remove('active');
+            selectedVmElement = vmElement;
+            selectedVmElement.classList.add('active');
+
+            const token = vmElement.getAttribute('data-token');
+            document.getElementById('placeholder').style.display = 'none';
+            
+            const iframe = document.getElementById('vnc-frame');
+            iframe.style.display = 'block';
+
+            // ИСПРАВЛЕНО: Ссылка теперь указывает строго на системный путь /novnc/vnc.html
+            iframe.src = `/novnc/vnc.html?autoconnect=true&resize=scale&port=${configPorts.websockifyPort}&path=?token=${token}`;
+        }
+    </script>
+</body>
+</html>
