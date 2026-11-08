@@ -8,24 +8,23 @@ from urllib.parse import parse_qs
 
 import websockets
 try:
-    # Проверка наличия современного API (websockets v13-15+)
+    # Попытка использовать websockets v13-15+
     from websockets.asyncio.server import serve as ws_serve
     LEGACY_WS = False
 except ModuleNotFoundError:
-    # Переключение на классический API (websockets v10.4)
+    # Переключение на websockets v10.4
     from websockets import serve as ws_serve
     LEGACY_WS = True
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
-# Шаблон парсинга строк в файле токенов
+# Шаблон парсинга токенов
 TOKEN_REGEXP = re.compile(r'^([a-zA-Z0-9_-]+):\s*([0-9.]+):(\d+)')
-TOKENS_PATH = ""
 
 def get_target_addr(token):
     """Ищет IP и порт целевого VNC-сервера в файле токенов по переданному токену."""
     try:
-        with open(TOKENS_PATH, 'r', encoding='utf-8') as f:
+        with open(TOKENS_SOURCE, 'r', encoding='utf-8') as f:
             for line in f:
                 line = line.strip()
                 if not line or line.startswith('#'): continue
@@ -42,13 +41,13 @@ async def ws_handler(websocket, path=None):
     Принимает 'path' для websockets v10.4, но игнорирует его для websockets v13-15+
     """
 
-    # Кросс-версионный сбор полного пути запроса со строкой параметров
+    # Получение пути запроса со строкой параметров
     if LEGACY_WS:
-        current_path = websocket.path if (hasattr(websocket, 'path') and "?" in getattr(websocket, 'path', '')) else path
+        current_path = websocket.path if "?" in websocket.path else path
     else:
         current_path = getattr(websocket.request, 'uri', websocket.request.path or "")
     
-    # Безопасное строковое разделение через .partition('?')
+    # Разделение пути по символу '?'
     _, _, query_str = current_path.partition('?')
     
     # Извлечение списка токенов и защита индекса с помощью дефолтного [""]
@@ -56,19 +55,21 @@ async def ws_handler(websocket, path=None):
     token_list = params.get('token', params.get('path', [""]))
     token = token_list[0].strip() if token_list and token_list[0] else None
     
-    # ФОЛБЭК: Защита работы за корпоративными реверс-прокси
+    # Защита работы за корпоративными реверс-прокси, которые могут выполнять подмену заголовков
     if not token:
-        # В websockets v10.4 заголовки лежат в websocket.request_headers, в websockets v13-15+ — в websocket.request.headers
+        # Получение заголовков (в websockets v10.4 — request_headers, в websockets v13-15+ — request.headers)
         headers = websocket.request_headers if LEGACY_WS else websocket.request.headers
         forwarded_uri = headers.get('X-Forwarded-Uri', '')
-        if forwarded_uri and '?' in forwarded_uri:
-            _, _, fwd_query = forwarded_uri.partition('?')
-            fwd_list = parse_qs(fwd_query).get('token', [""])
-            token = fwd_list[0].strip() if fwd_list and fwd_list[0] else None
-
-    if not token:
-        await websocket.close(1008, "Missing token")
-        return
+        
+        # Разделение пути по символу '?'
+        _, _, fwd_query = forwarded_uri.partition('?')
+        fwd_list = parse_qs(fwd_query).get('token', [""])
+        token = fwd_list.strip() if fwd_list and fwd_list else None
+        
+        # Аварийное закрытие сокета, если даже в заголовках прокси токен отсутствует 
+        if not token:
+            await websocket.close(1008, "Missing token")
+            return
 
     vnc_target = get_target_addr(token)
     if not vnc_target:
@@ -87,20 +88,23 @@ async def ws_handler(websocket, path=None):
     is_closed = False
 
     async def close_all():
-        """Синхронное и безопасное закрытие всех открытых каналов связи сессии (TCP и WS)."""
+        """Синхронное закрытие всех открытых каналов связи сессии (TCP и WS)"""
         nonlocal is_closed
         if not is_closed:
             is_closed = True
             try: 
                 writer.close()
                 if hasattr(writer, 'wait_closed'): await writer.wait_closed()
-            except Exception: pass
-            try: await websocket.close()
-            except Exception: pass
-            logging.info(f"[{token}] Все транспортные каналы сессии штатно закрыты")
+            except Exception:
+                pass
+            try:
+                await websocket.close()
+            except Exception:
+                pass
+            logging.info(f"[{token}] Транспортные каналы сессии закрыты")
 
     async def keep_alive_pinger():
-        """Внутренний серверный пингер для предотвращения таймаутов простоя сетевого оборудования."""
+        """Внутренний серверный пингер для предотвращения таймаутов простоя сетевого оборудования"""
         try:
             while not is_closed:
                 await asyncio.sleep(15)
@@ -109,26 +113,31 @@ async def ws_handler(websocket, path=None):
                     # Совместимость с пингами корутин в websockets v10.4
                     if asyncio.isfuture(res) or asyncio.iscoroutine(res):
                         await asyncio.wait_for(res, timeout=10.0)
-        except Exception: await close_all()
+        except Exception:
+            await close_all()
 
     async def pipeline_browser_to_vm():
-        """Входящий пайплайн передачи данных: Браузер -> VNC бэкенд виртуальной машины."""
+        """Входящий пайплайн передачи данных от браузера в VNC бэкенд виртуальной машины"""
         try:
             async for message in websocket:
                 if isinstance(message, bytes) and len(message) > 0 and not is_closed:
                     writer.write(message); await writer.drain()
-        except Exception: pass
-        finally: await close_all()
+        except Exception:
+            pass
+        finally:
+            await close_all()
 
     async def pipeline_vm_to_browser():
-        """Исходящий пайплайн передачи данных: VNC бэкенд -> Браузер пользователя."""
+        """Исходящий пайплайн передачи данных от VNC бэкенда в браузер"""
         try:
             while not is_closed:
                 data = await reader.read(65536)
                 if not data: break
                 await asyncio.wait_for(websocket.send(data), timeout=10.0)
-        except Exception: pass
-        finally: await close_all()
+        except Exception:
+            pass
+        finally:
+            await close_all()
 
     await asyncio.gather(keep_alive_pinger(), pipeline_browser_to_vm(), pipeline_vm_to_browser(), return_exceptions=True)
 
@@ -145,7 +154,8 @@ def modify_handshake_headers(*args):
             request_headers['Connection'] = 'Upgrade'
             if 'Upgrade' not in request_headers:
                 request_headers['Upgrade'] = 'websocket'
-    except Exception: pass
+    except Exception:
+        pass
     return None 
 
 async def main(listen_host, listen_port):
@@ -153,7 +163,7 @@ async def main(listen_host, listen_port):
     logging.info(f"Engine launched in {'legacy (websockets v10.4)' if LEGACY_WS else 'modern (websockets v13-15+)'} mode")
     async with ws_serve(ws_handler, listen_host, listen_port, subprotocols=["binary"], process_request=modify_handshake_headers):
         logging.info(f"VNC-to-WebSocket Bridge Engine active on port {listen_port}")
-        # Безопасное кросс-версионное бесконечное удержание асинхронного цикла событий
+        # Удержание асинхронного цикла событий
         if LEGACY_WS:
             await asyncio.Event().wait()
         else:
@@ -173,8 +183,10 @@ if __name__ == "__main__":
     parser.add_argument("--token-source", default="/srv/qemu/tokens.conf")
     args = parser.parse_args()
 
-    TOKENS_PATH = args.token_source
+    TOKENS_SOURCE = args.token_source
     host, port = args.listen_target
     
-    try: asyncio.run(main(host, port))
-    except KeyboardInterrupt: pass
+    try:
+        asyncio.run(main(host, port))
+    except KeyboardInterrupt:
+        pass
