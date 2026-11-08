@@ -113,10 +113,7 @@
             initPanel();
         });
 
-        /**
-         * Генерирует быстрый шестнадцатеричный хеш из строки для пуленепробиваемых UID.
-         * Соответствует стандартам W3C (начинается со строчной буквы 'i').
-         */
+        // Генерация шестнадцатеричного хеша
         function StringToHash(str) {
             let hash = 0;
             if (str.length === 0) return 'i00000000';
@@ -125,6 +122,7 @@
                 hash = ((hash << 5) - hash) + chr;
                 hash |= 0;
             }
+            // Для совместимости со стандартами W3C первым символом вставляем букву
             return 'i' + Math.abs(hash).toString(16);
         }
 
@@ -180,7 +178,7 @@
                     const vmLi = document.createElement('li');
                     vmLi.className = 'vm-item';
                     
-                    // Защищаем элемент уникальным хэш-UID от коллизий одинаковых имен
+                    // Защита элемента от коллизий одинаковых имен с помощью уникального UID 
                     vmLi.id = StringToHash(`${vm.ip}-${vm.token}`); 
                     vmLi.textContent = vm.token; 
                     
@@ -219,7 +217,7 @@
                 if (!response.ok) return;
                 const states = await response.json();
                 
-                // 1. Перекрашиваем виртуалки online/offline в DOM
+                // Окрашивание виртуалки online/offline в DOM
                 Object.entries(states).forEach(([stateKey, isOnline]) => {
                     const [ip, token] = stateKey.split(':', 2);
                     const targetUid = StringToHash(`${ip}-${token}`);
@@ -231,17 +229,16 @@
                     }
                 });
 
-                // 2. ДЕКОРАТИВНОЕ УЛУЧШЕНИЕ: Умное управление состоянием папок хостов
                 document.querySelectorAll('.node-item').forEach(node => {
                     const sublist = node.nextElementSibling;
-                    // Проверяем, есть ли внутри этой папки хотя бы одна работающая (online) машина
+                    // Проверка, есть ли внутри этой папки хотя бы одна работающая машина
                     const hasOnlineVms = sublist && sublist.querySelector('.online');
                     
                     if (hasOnlineVms) {
-                        // Если есть живые машины — красим папку в активный цвет
+                        // Если есть живые машины, окрашивание папки в активный цвет
                         node.classList.add('node-active');
                         
-                        // АВТО-РАЗВЕРТЫВАНИЕ: Если папка была свернута, но в ней включили виртуалку — плавно раскрываем её [1.4]
+                        // Если папка была свернута, но в ней включили виртуалку — раскрываем её
                         if (node.classList.contains('collapsed')) {
                             node.classList.remove('collapsed');
                             sublist.classList.remove('hidden');
@@ -250,7 +247,7 @@
                         // Если все машины выключены — тушим подсветку папки
                         node.classList.remove('node-active');
                         
-                        // АВТО-СВОРАЧИВАНИЕ: Если папка пустая и еще не свернута — автоматически захлопываем её [1.4]
+                        // Если папка пустая и еще не свернута — захлопываем её
                         if (!node.classList.contains('collapsed')) {
                             node.classList.add('collapsed');
                             sublist.classList.add('hidden');

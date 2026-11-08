@@ -17,10 +17,10 @@ TOKEN_REGEXP = re.compile(r'^([a-zA-Z0-9_-]+):\s*([0-9.]+):(\d+)')
 TOKENS_PATH = ""
 
 def load_raw_tokens():
-    """Читает оригинальный плоский tokens.conf и возвращает список структур ВМ."""
+    """Читает конфигурационный файл с токенами и возвращает список структур ВМ"""
     vms_list = []
     if not os.path.exists(TOKENS_PATH) or not os.access(TOKENS_PATH, os.R_OK):
-        logging.error(f"Файл конфигурации токенов недоступен: {TOKENS_PATH}")
+        logging.error(f"Конфигурационный файл с токенами недоступен: {TOKENS_PATH}")
         return vms_list
     try:
         with open(TOKENS_PATH, 'r', encoding='utf-8') as f:
@@ -35,7 +35,7 @@ def load_raw_tokens():
                         "port": int(match.group(3))
                     })
     except Exception as e:
-        logging.error(f"Ошибка при чтении файла токенов: {e}")
+        logging.error(f"Ошибка при чтении конфигурационного файла с токенами: {e}")
     return vms_list
 
 class InstructorScannerHandler(BaseHTTPRequestHandler):
@@ -47,7 +47,7 @@ class InstructorScannerHandler(BaseHTTPRequestHandler):
         path, _, _ = self.path.partition('?')
         webroot = self.server.webroot
 
-        # REST API: Передаем конфигурацию служебных портов и плоский список ВМ
+        # REST API: Передача конфигурации служебных портов и списка виртуальных машин
         if path == '/api/tokens':
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
@@ -64,7 +64,7 @@ class InstructorScannerHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(api_response).encode('utf-8'))
             return
 
-        # REST API: Сканер онлайн-статусов ВМ с поддержкой составных ключей для дубликатов имен
+        # REST API: Сканирование статусов виртуальных машин с поддержкой составных ключей для защиты от дубликатов имен
         if path == '/api/ping':
             vms = load_raw_tokens()
             results = {}
@@ -83,7 +83,7 @@ class InstructorScannerHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(results).encode('utf-8'))
             return
 
-        # UI Статика: Раздача системных файлов noVNC прямо из /usr/share/novnc/
+        # UI Статика: Раздача системных файлов noVNC
         if path.startswith("/novnc/"):
             relative_path = path.replace("/novnc/", "", 1)
             file_path = os.path.normpath(os.path.join(webroot, relative_path))
@@ -98,7 +98,7 @@ class InstructorScannerHandler(BaseHTTPRequestHandler):
                 self.wfile.write(f.read())
             return
 
-        # UI Статика: Раздача главной страницы Панели Инструктора
+        # UI Статика: Раздача главной страницы
         if path == "/" or path == "/index.html":
             if not os.path.exists(TEMPLATE_PATH):
                 self.send_error(404, "UI Template missing")
