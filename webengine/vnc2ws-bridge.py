@@ -37,7 +37,7 @@ def get_target_addr(token):
 
 
 async def ws_handler(websocket, path=None):
-    """Главный универсальный асинхронный воркер WebSocket соединения.
+    """Асинхронный воркер WebSocket соединения.
     Принимает 'path' для websockets v10.4, но игнорирует его для websockets v13-15+
     """
 
@@ -178,7 +178,7 @@ def valid_listen_address(netloc):
         raise argparse.ArgumentTypeError(f"'{netloc}' не является валидным сетевым адресом.")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="vnc2ws-bridge: High-performance Universal Proxy")
+    parser = argparse.ArgumentParser(description="vnc2ws-bridge: Аsynchronous network proxy encapsulates raw binary VNC/RFB graphic streams into HTML5 WebSocket frames")
     parser.add_argument("listen_target", nargs="?", type=valid_listen_address, default="0.0.0.0:8080")
     parser.add_argument("--token-source", default="/srv/qemu/tokens.conf")
     args = parser.parse_args()

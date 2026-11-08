@@ -89,12 +89,7 @@ class VLabManagementHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         """Основной линейный диспетчер маршрутизации входящих HTTP-запросов (GET)."""
-        # ОПТИМИЗАЦИЯ: Сплит строки по знаку '?' работает быстрее urlparse на уровне ядра Python
-        if '?' in self.path:
-            path, query_str = self.path.split('?', 1)
-        else:
-            path = self.path
-            query_str = ""
+        path, _, query_str = self.path.partition('?')
 
         # БЕЗОПАСНОЕ ИЗВЛЕЧЕНИЕ: Использование фолбэка [""] защищает индекс [0] от IndexError.
         # Текстовый маркер [0] прописан явно, метод .strip() применяется строго к строке.
@@ -102,7 +97,7 @@ class VLabManagementHandler(BaseHTTPRequestHandler):
         vm_name = params.get("vm", [""])[0].strip()
         webroot = self.server.webroot
 
-        # БЕЗОПАСНОСТЬ: Исключаем спецсимволы, защищая систему от инъекций в bash утилиты vmctrl
+        # Проверка имени для защиты от инъекций в bash утилиты vmctrl
         if vm_name and not VM_NAME_SAFE_REGEXP.match(vm_name):
             self.send_error(400, "Invalid VM name format")
             return
@@ -110,8 +105,6 @@ class VLabManagementHandler(BaseHTTPRequestHandler):
         # Маршрут API: Асинхронный запуск виртуальной машины
         if path == "/start" and vm_name:
             logging.info(f"API: Запуск виртуальной машины '{vm_name}'")
-            # ПРИМЕЧАНИЕ: subprocess.Popen выполняется в фоне. Мы не вызываем .wait(),
-            # чтобы долгий старт операционной системы внутри ВМ не подвешивал веб-сервер.
             subprocess.Popen(["/usr/local/bin/vmctrl", "start", vm_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             self.send_simple_response(200, b"OK", "text/plain")
             return
@@ -142,14 +135,11 @@ class VLabManagementHandler(BaseHTTPRequestHandler):
             relative_path = path.replace("/novnc/", "", 1)
             file_path = os.path.normpath(os.path.join(webroot, relative_path))
             
-            # БЕЗОПАСНОСТЬ: Проверка Path Traversal исключает чтение системных файлов через '../../'
+            # Проверка Path Traversal исключает чтение системных файлов через '../../'
             if not file_path.startswith(os.path.normpath(webroot)) or not os.path.exists(file_path) or os.path.isdir(file_path):
                 self.send_error(404, "File not found")
                 return
                 
-            # КРИТИЧЕСКИЙ НЮАНС: mimetypes.guess_type динамически определяет расширения.
-            # Это гарантирует отдачу заголовка 'application/javascript' для rfb.js,
-            # защищая noVNC от блокировки строгими правилами безопасности Firefox.
             content_type, _ = mimetypes.guess_type(file_path)
             with open(file_path, 'rb') as f:
                 self.send_simple_response(200, f.read(), content_type or "text/plain")
@@ -157,14 +147,17 @@ class VLabManagementHandler(BaseHTTPRequestHandler):
 
         # Маршрут UI: Рендеринг главной страницы консоли
         if path == "/":
-            if not vm_name or not get_vnc_address(vm_name):
-                self.send_error(404, f"VM '{vm_name}' not registered")
+            if not vm_name:
+                self.send_error(400, "Parameter 'vm' is required")
+                return
+            if not get_vnc_address(vm_name):
+                self.send_error(404, f"Not Found: VM '{vm_name}' not registered in {TOKENS_PATH}")
                 return
             if not os.path.exists(TEMPLATE_PATH):
                 self.send_error(500, "Internal Server Error: UI Template missing")
                 return
             with open(TEMPLATE_PATH, 'r', encoding='utf-8') as f:
-                # Динамическая замена Go-плейсхолдеров шаблона на переменные Python
+                # Внедрение параметров текущей сессии в разметку страницы
                 html = f.read().replace("{{.VMName}}", vm_name).replace("{{.ProxyPort}}", str(self.server.proxy_port))
             self.send_simple_response(200, html.encode('utf-8'), "text/html; charset=utf-8")
             return
@@ -172,7 +165,7 @@ class VLabManagementHandler(BaseHTTPRequestHandler):
         self.send_error(404, "Not Found")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="vnc2ws-server: Web Console & Management API")
+    parser = argparse.ArgumentParser(description="vnc2ws-server: HTTP management server and REST API coordinator")
     parser.add_argument("listen", nargs="?", default="0.0.0.0:8081")
     parser.add_argument("--proxy-port", type=int, default=8080)
     parser.add_argument("--token-source", default="/srv/qemu/tokens.conf")
@@ -183,8 +176,6 @@ if __name__ == "__main__":
     host, port_str = args.listen.rsplit(':', 1) if ":" in args.listen else ("0.0.0.0", args.listen)
     addr = (host, int(port_str))
 
-    # Запуск сервера. ThreadingHTTPServer автоматически выделяет поток ОС на каждый запрос,
-    # что изолирует обработку HTTP от основного GIL асинхронного WebSocket шлюза.
     server = ThreadingHTTPServer(addr, VLabManagementHandler)
     server.proxy_port = args.proxy_port
     server.webroot = os.path.abspath(args.webroot)
