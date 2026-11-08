@@ -29,6 +29,14 @@
 - `entrypoint.sh` — скрипт контейнера (назначает IP 10.0.0.254 интерфейсу `host0`, запускает `chronyd -d -x` и через `chronyc settime` устанавливает смещенное время);
 - `chrony.conf` — конфиг chrony внутри контейнера (включает режим `manual`, `local stratum 10`, открывает доступ для сети 10.0.0.0/24 и делает привязку к bindaddress 10.0.0.254).
 
+
+Альтернативный вариант это запуск на хосте без контейнера, например, если мост имеет адрес `10.10.0.253`, то
+```
+python3 -m http.server 8000 --bind 10.10.0.253
+```
+в виртуалке будет доступен по `10.10.0.253:8000`
+
+
 # Проверка настроек сети
 
 > Если сетевое взаимодействие контейнера с хостом и клиентами отсутствует, нужно проверить к какому мосту подключен интерфейс контейнера `vb-vlab-servers`
@@ -117,7 +125,7 @@ Hint: Some lines were ellipsized, use -l to show in full.
 ## Настройка конфигурации
 ```
 sudo -i
-apt unstall chrony
+apt install chrony
 
 CONF_PATH="/etc/chrony/chrony.conf"
 
@@ -144,4 +152,39 @@ systemctl restart chrony
 ## Принудительное обновление времени
 ```
 chronyc -a makestep
+```
+
+# Альтернативный вариант
+
+Выполнить на хосте
+```
+sudo -i
+apt install chrony
+# Останавливаем системный chrony
+sudo systemctl stop chrony
+# Полностью отключаем его автозапуск при загрузке системы
+sudo systemctl disable chrony
+
+sudo cat <<EOF > /etc/chrony/chrony-fake.conf
+local stratum 10
+allow 10.10.0.0/24
+bindaddress 10.10.0.253
+port 123
+makestep 1 -1
+EOF
+
+# Запуск в изолированном пространстве имен времени с фейковым временем
+unshare --time --fork bash -c "date -s '2020-01-01 12:00:00' && chronyd -d -f /etc/chrony/chrony-fake.conf"
+```
+
+Выполнить в виртуальной машине
+```
+sudo -i
+apt install chrony
+# Закомментировать в /etc/chrony/chrony.conf все pool и server
+echo "server 10.10.0.253 prefer iburst" >> /etc/chrony/chrony.conf
+
+systemctl restart chrony
+chronyc -a makestep
+
 ```
