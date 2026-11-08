@@ -1,4 +1,4 @@
-PACKAGE_NAME := vlab-main
+PACKAGE_NAME := vlab-base
 PROJECT_DIR := root
 ARCH := all
 DESTDIR ?= /
