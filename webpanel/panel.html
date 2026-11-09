@@ -47,7 +47,7 @@
             display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem;
             font-weight: 600; cursor: pointer; white-space: nowrap !important;
         }
-        
+
         .node-item:hover, .vm-item:hover {
             background-color: var(--sidebar-hover); color: HighlightText;
         }
@@ -131,9 +131,9 @@
                 const response = await fetch('/api/tokens');
                 if (!response.ok) return;
                 const data = await response.json();
-                
+
                 if (data.config) serverConfig = data.config;
-                
+
                 const treeData = {};
                 if (data.vms) {
                     data.vms.forEach(vm => {
@@ -161,7 +161,7 @@
                 const nodeItem = document.createElement('div');
                 nodeItem.className = 'node-item';
                 nodeItem.setAttribute('data-host', hostName);
-                
+
                 const toggleSpan = document.createElement('span');
                 toggleSpan.className = 'node-toggle';
                 toggleSpan.textContent = '▼';
@@ -177,11 +177,11 @@
                 hostInfo.vms.forEach(vm => {
                     const vmLi = document.createElement('li');
                     vmLi.className = 'vm-item';
-                    
+
                     // Защита элемента от коллизий одинаковых имен с помощью уникального UID 
                     vmLi.id = StringToHash(`${vm.ip}-${vm.token}`); 
                     vmLi.textContent = vm.token; 
-                    
+
                     vmLi.setAttribute('data-token', vm.token);
                     vmLi.setAttribute('data-ip', vm.ip);
 
@@ -189,11 +189,11 @@
                         document.querySelectorAll('.vm-item').forEach(el => el.classList.remove('active'));
                         vmLi.classList.add('active');
                         selectedVmToken = vm.token;
-                        
+
                         document.getElementById('placeholder').style.display = 'none';
                         const iframe = document.getElementById('vnc-frame');
                         iframe.style.display = 'block';
-                        
+
                         // Динамическая подстановка прокси-порта из конфигурации бэкенда
                         iframe.src = `/novnc/vnc.html?autoconnect=true&resize=scale&host=${vm.ip}&port=${serverConfig.proxyPort}&path=?token=${vm.token}`;
                     });
@@ -216,13 +216,13 @@
                 const response = await fetch('/api/ping');
                 if (!response.ok) return;
                 const states = await response.json();
-                
+
                 // Окрашивание виртуалки online/offline в DOM
                 Object.entries(states).forEach(([stateKey, isOnline]) => {
                     const [ip, token] = stateKey.split(':', 2);
                     const targetUid = StringToHash(`${ip}-${token}`);
                     const el = document.getElementById(targetUid);
-                    
+
                     if (el) {
                         if (isOnline) el.classList.add('online');
                         else el.classList.remove('online');
@@ -233,11 +233,11 @@
                     const sublist = node.nextElementSibling;
                     // Проверка, есть ли внутри этой папки хотя бы одна работающая машина
                     const hasOnlineVms = sublist && sublist.querySelector('.online');
-                    
+
                     if (hasOnlineVms) {
                         // Если есть живые машины, окрашивание папки в активный цвет
                         node.classList.add('node-active');
-                        
+
                         // Если папка была свернута, но в ней включили виртуалку — раскрываем её
                         if (node.classList.contains('collapsed')) {
                             node.classList.remove('collapsed');
@@ -246,7 +246,7 @@
                     } else {
                         // Если все машины выключены — тушим подсветку папки
                         node.classList.remove('node-active');
-                        
+
                         // Если папка пустая и еще не свернута — захлопываем её
                         if (!node.classList.contains('collapsed')) {
                             node.classList.add('collapsed');

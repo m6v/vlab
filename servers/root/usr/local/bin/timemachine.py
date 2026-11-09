@@ -62,7 +62,7 @@ def setup_socket(bind_ip, bind_port):
 def main():
     args = parse_args()
     bind_ip, bind_port = parse_address(args.addr)
-    
+
     start_monotonic = time.monotonic()
     base_fake_unix = time.time() + args.offset
 
@@ -97,15 +97,15 @@ def main():
             data, addr = s.recvfrom(1024)
             if len(data) < 48:
                 continue
-            
+
             # Атомарный расчет времени на основе монотонных часов хоста
             elapsed = time.monotonic() - start_monotonic
             current_fake_unix = base_fake_unix + elapsed
-            
+
             ntp_time_raw = current_fake_unix + NTP_DELTA
             ntp_secs = int(ntp_time_raw)
             ntp_frac = int((ntp_time_raw - ntp_secs) * 4294967296)
-            
+
             ref_secs = ntp_secs - 1
             ref_frac = ntp_frac
 
@@ -115,13 +115,13 @@ def main():
             response[24:32] = data[40:48]
             struct.pack_into("!II", response, 32, ntp_secs, ntp_frac)
             struct.pack_into("!II", response, 40, ntp_secs, ntp_frac)
-            
+
             s.sendto(response, addr)
 
             client_ip, client_port = addr
             sent_date_str = datetime.fromtimestamp(current_fake_unix).strftime('%Y-%m-%d %H:%M:%S')
             logging.info("Ответ с временем %s отправлен на %s:%d", sent_date_str, client_ip, client_port)
-            
+
         except socket.error:
             # Игнорование сетевых аномалий при работе с tap-интерфейсами
             pass

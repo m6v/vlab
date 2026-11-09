@@ -1,0 +1,22 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure)
+        echo "Настройка службы vlab-webpanel..."
+        systemctl daemon-reload
+        systemctl enable vlab-webpanel.service
+        systemctl restart vlab-webpanel.service
+        ;;
+
+    abort-upgrade|abort-remove|abort-deconfigure)
+        # Код выполняемый в случае, если установка прервалась или произошел откат
+        ;;
+
+    *)
+        echo "postinst вызван с неизвестным аргументом: \$1" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

@@ -34,7 +34,6 @@ deb:
 	@if [ -f $(PROJECT_DIR)/DEBIAN/postrm ]; then chmod 755 $(PROJECT_DIR)/DEBIAN/postrm; fi
 
 	@echo "Сборка пакета $(DEB_FILE)..."
-	@# Используем zstd для баланса скорости и сжатия (если ОС старая, можно заменить на -Zxz)
 	dpkg-deb -Zgzip --root-owner-group --build $(PROJECT_DIR) $(DEB_FILE)
 	@echo "Пакет успешно создан: $(DEB_FILE)"
 

@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s', datefmt='%Y/%m/%d %H:%M:%S')
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-TEMPLATE_PATH = os.path.join(BASE_DIR, "index.html")
+TEMPLATE_PATH = os.path.join(BASE_DIR, "panel.html")
 TOKEN_REGEXP = re.compile(r'^([a-zA-Z0-9_-]+):\s*([0-9.]+):(\d+)')
 TOKENS_PATH = ""
 
@@ -53,7 +53,7 @@ class InstructorScannerHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'application/json')
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
-            
+
             api_response = {
                 "config": {
                     "pythonPort": self.server.server_port,
@@ -99,7 +99,7 @@ class InstructorScannerHandler(BaseHTTPRequestHandler):
             return
 
         # UI Статика: Раздача главной страницы
-        if path == "/" or path == "/index.html":
+        if path == "/" or path == "/panel.html":
             if not os.path.exists(TEMPLATE_PATH):
                 self.send_error(404, "UI Template missing")
                 return
@@ -123,16 +123,16 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     TOKENS_PATH = args.token_source
-    
+
     if not os.path.exists(args.webroot) or not os.path.exists(TEMPLATE_PATH):
-        logging.fatal("[FATAL] Критические системные ресурсы (webroot или index.html) отсутствуют!")
+        logging.fatal("[FATAL] Критические системные ресурсы (webroot или panel.html) отсутствуют!")
         sys.exit(1)
 
     server = ThreadingHTTPServer(("0.0.0.0", args.port), InstructorScannerHandler)
     server.server_port = args.port
     server.proxy_port = args.wport
     server.webroot = os.path.abspath(args.webroot)
-    
-    logging.info(f"Панель инструктора успешно запущена на http://0.0.0:{args.port}")
+
+    logging.info(f"Панель инструктора успешно запущена на http://0.0.0.0:{args.port}")
     try: server.serve_forever()
     except KeyboardInterrupt: pass

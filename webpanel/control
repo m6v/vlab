@@ -1,0 +1,8 @@
+Package: vlab-webpanel
+Version: 1.1
+Section: utils
+Priority: optional
+Architecture: amd64
+Depends: python3, vlab-webengine
+Maintainer: Sergey Maksimov <m6v@mail.ru>
+Description: Instructor's web-panel for viewing learner's virtual machines iface

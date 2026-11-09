@@ -1,4 +1,3 @@
-# Единый источник правды для универсальных компонентов
 SERVER_NAME = vnc2ws-server
 BRIDGE_NAME = vnc2ws-bridge
 
@@ -6,12 +5,12 @@ BRIDGE_NAME = vnc2ws-bridge
 PKG_NAME = vlab-webengine
 BASE_VERSION = 1.2
 
-# Единый путь для установки
+# Путь для установки
 TARGET_DIR = /srv/qemu
 
 .PHONY: all clean install uninstall deb
 
-all: build
+all: deb
 
 # Очистка папки проекта от собранных пакетов и временных файлов
 clean:
@@ -37,8 +36,8 @@ uninstall:
 	rm -f $(TARGET_DIR)/$(BRIDGE_NAME).py $(TARGET_DIR)/$(SERVER_NAME).py $(TARGET_DIR)/index.html $(TARGET_DIR)/tokens.default
 	@echo "Компоненты удалены."
 
-# Автоматическая сборка легитимного .deb пакета
-deb: build
+# Автоматическая сборка .deb пакета
+deb:
 	@echo "Calculating version number from git commit count..."
 	$(eval COMMIT_COUNT := $(shell git rev-list --count HEAD 2>/dev/null || echo 0))
 	$(eval VERSION := $(BASE_VERSION).$(COMMIT_COUNT))

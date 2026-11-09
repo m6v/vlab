@@ -5,5 +5,5 @@ Architecture: amd64
 Maintainer: КБ "НАВИС" <support@navis.ru>, Sergey Maksimov <m6v@mail.ru>
 Depends: python3
 Description: Custom NTP-server with time shifting and HTTP-server
-Version: 2.1.240
-Installed-Size: 16
+Version: 2.1.242
+Installed-Size: 44

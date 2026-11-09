@@ -1,6 +1,22 @@
 #!/bin/sh
 set -e
-systemctl daemon-reload
-systemctl enable vnc2ws-bridge.service vnc2ws-server.service
-systemctl restart vnc2ws-bridge.service vnc2ws-server.service
+
+case "$1" in
+    configure)
+        echo "Настройка служб веб-доступа к рабочим чтолам виртуальных машин ..."
+        systemctl daemon-reload
+        systemctl enable vnc2ws-bridge.service vnc2ws-server.service
+        systemctl restart vnc2ws-bridge.service vnc2ws-server.service
+        ;;
+
+    abort-upgrade|abort-remove|abort-deconfigure)
+        # Код выполняемый в случае, если установка прервалась или произошел откат
+        ;;
+
+    *)
+        echo "postinst вызван с неизвестным аргументом: \$1" >&2
+        exit 1
+        ;;
+esac
+
 exit 0

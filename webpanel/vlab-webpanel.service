@@ -1,0 +1,18 @@
+[Unit]
+Description=Instructor's Web Panel
+After=network.target
+
+[Service]
+Type=simple
+User=nobody
+Group=nogroup
+WorkingDirectory=/srv/qemu
+ExecStart=/srv/qemu/vnc2ws-webpanel.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=vnc2ws-webpanel
+
+[Install]
+WantedBy=multi-user.target

@@ -56,8 +56,10 @@ case "$1" in
         qemu-img create -f qcow2 -F qcow2 -b $SYSTEM_POOL/ipc-slave.qcow2 $SKEL_POOL/ipc-slave.qcow2
         qemu-img create -f qcow2 -F qcow2 -b $SYSTEM_POOL/rubicon.qcow2 $SKEL_POOL/rubicon.qcow2
 
-        echo "Установка прав на запись в лог-файл..."
+        echo "Установка прав на запись и запрета удаления лог-файла..."
+        touch /srv/qemu/vmctrl.log
         chmod 666 /srv/qemu/vmctrl.log
+        chattr +a /srv/qemu/vmctrl.log
         ;;
 
     abort-upgrade|abort-remove|abort-deconfigure)
