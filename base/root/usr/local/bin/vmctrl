@@ -3,22 +3,24 @@
 CONFIG_DIR="/srv/qemu/config"
 LOG_FILE="/srv/qemu/vmctrl.log"
 
-# Определение имени пользователя на рабочем месте (seat0)
-export USER=$(loginctl show-session $(loginctl show-seat seat0 -p ActiveSession --value) -p Name --value)
+# Определение имени пользователя, сидящего за монитором (seat0)
+export SEAT_USER=$(loginctl show-session $(loginctl show-seat seat0 -p ActiveSession --value) -p Name --value)
 
-# Если пользователь не найден или root, аварийный выход
-if [[ $(id -u $USER 2>/dev/null) -eq 0 ]]; then
-    echo "Ошибка: Активный локальный пользователь на seat0 не найден. Запуск прерван." >&2
+# Аварийный выход, если на seat0 нет активной сессии
+if [ -z "$SEAT_USER" ]; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') $(hostname) [Error] Запуск прерван: на seat0 нет активной сессии" >> $LOG_FILE
     exit 1
 fi
 
-# Если скрипт запущен от root (EUID 0), перезупуск от $USER
-if [ "$EUID" -eq 0 ]; then
-    exec runuser -l "$USER" -c "$(printf '%q ' "$0" "$@")"
+# Переключение на пользователя, только если мы еще не под ним (защита от бесконечной рекурсии)
+if [ "$(whoami)" != "$SEAT_USER" ]; then
+    export USER="$SEAT_USER"
+    export HOME="/home/$USER"
+    exec sudo -u "$USER" HOME="$HOME" USER="$USER" "$0" "$@"
 fi
 
 # Логирование исполняемой команды
-echo "$(date '+%Y-%m-%d %H:%M:%S') $(hostname) seat0:$USER $0 $*" >> $LOG_FILE
+echo "$(date '+%Y-%m-%d %H:%M:%S') $(hostname) [Info] seat0:$USER $0 $*" >> $LOG_FILE
 
 ACTION="$1"
 
