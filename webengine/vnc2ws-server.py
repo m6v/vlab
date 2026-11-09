@@ -19,6 +19,8 @@ VM_NAME_SAFE_REGEXP = re.compile(r'^[a-zA-Z0-9_-]+$')
 # Шаблон парсинга строк tokens.conf: Имя_ВМ:Локальный_IP:Порт_VNC
 TOKEN_REGEXP = re.compile(r'^([a-zA-Z0-9_-]+):\s*([0-9.]+):(\d+)')
 
+LOG_FILE = "/srv/qemu/vmctrl.log"
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s', datefmt='%Y/%m/%d %H:%M:%S')
 
 # Глобальная переменная для пути к конфигурации токенов (инициализируется в __main__)
@@ -49,19 +51,16 @@ def get_vnc_address(vm_name):
 def is_vm_running(vnc_addr_tuple):
     """
     Опрашивает статус ВМ методом проверки доступности её локального VNC-порта.
-
-    ПРИМЕЧАНИЕ: Использование минимального таймаута (0.5 сек) гарантирует, что
-    опрос зависшего сокета не заблокирует ресурсы рабочего HTTP-потока.
-
     Args:
         vnc_addr_tuple (tuple): Кортеж (IP-адрес, Порт) целевой ВМ.
-
     Returns:
         bool: True, если порт открыт и отвечает (RUNNING), иначе False (STOPPED).
     """
     if not vnc_addr_tuple: return False
     try:
         host, port = vnc_addr_tuple
+        # Таймаут 0.5 сек предотвращает блокирование ресурсов
+        # рабочего HTTP-потока при опросе зависшего сокета
         with socket.create_connection((host, port), timeout=0.5):
             return True
     except Exception:
@@ -77,8 +76,7 @@ class VLabManagementHandler(BaseHTTPRequestHandler):
     def send_simple_response(self, code, body, content_type):
         """
         Унифицированный хелпер для формирования и отправки стандартных ответов HTTP.
-
-        ПРИМЕЧАНИЕ: Заголовок CORS добавлен для предотвращения блокировок браузера
+        Заголовок CORS добавлен для предотвращения блокировок браузера
         при AJAX-опросе статуса ВМ с фронтенда.
         """
         self.send_response(code)
@@ -90,9 +88,6 @@ class VLabManagementHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         """Основной линейный диспетчер маршрутизации входящих HTTP-запросов (GET)."""
         path, _, query_str = self.path.partition('?')
-
-        # БЕЗОПАСНОЕ ИЗВЛЕЧЕНИЕ: Использование фолбэка [""] защищает индекс [0] от IndexError.
-        # Текстовый маркер [0] прописан явно, метод .strip() применяется строго к строке.
         params = parse_qs(query_str)
         vm_name = params.get("vm", [""])[0].strip()
         webroot = self.server.webroot
@@ -105,7 +100,13 @@ class VLabManagementHandler(BaseHTTPRequestHandler):
         # Маршрут API: Асинхронный запуск виртуальной машины
         if path == "/start" and vm_name:
             logging.info(f"API: Запуск виртуальной машины '{vm_name}'")
-            subprocess.Popen(["/usr/local/bin/vmctrl", "start", vm_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            with open(LOG_FILE, "w") as log_file:
+                subprocess.Popen(
+                    ["/usr/local/bin/vmctrl", "start", vm_name],
+                    stdout=log_file, 
+                    stderr=log_file,
+                    start_new_session=True
+                )
             self.send_simple_response(200, b"OK", "text/plain")
             return
 
@@ -139,7 +140,7 @@ class VLabManagementHandler(BaseHTTPRequestHandler):
             if not file_path.startswith(os.path.normpath(webroot)) or not os.path.exists(file_path) or os.path.isdir(file_path):
                 self.send_error(404, "File not found")
                 return
-                
+
             content_type, _ = mimetypes.guess_type(file_path)
             with open(file_path, 'rb') as f:
                 self.send_simple_response(200, f.read(), content_type or "text/plain")
