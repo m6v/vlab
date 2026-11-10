@@ -50,6 +50,8 @@ mkdir -p /tmp/qemu/$USER
 chmod 700 /tmp/qemu/$USER
 # Управляющий сокет ВМ
 VM_SOCK=/tmp/qemu/$USER/$VM_NAME.sock
+# Пул с образами виртуальных машин, USB-дисков и т.п.
+USER_POOL="/home/$USER/.local/share/qemu/images"
 
 if [ "$ACTION" = "start" ]; then
     CONF_FILE="${CONFIG_DIR}/${VM_NAME}.conf"
@@ -111,48 +113,43 @@ fi
 # Основной блок выполнения действий
 case "$ACTION" in
     usb-attach)
-        DISK_PATH="$2"
-        if [ -z "$DISK_PATH" ] || [ ! -f "$DISK_PATH" ]; then
+        DISK_NAME="$2"
+        # Если полный путь не задан, используем образ в пользовательском пуле
+        [ "$(dirname "$DISK_NAME")" = "." ] && DISK_PATH="${USER_POOL}/${DISK_NAME}" || DISK_PATH="$DISK_NAME"
+
+        if [ ! -f "$DISK_PATH" ]; then
             echo "Ошибка: Образ USB-носителя не задан или не найден." >&2
             echo "Использование: $0 usb-attach <путь_к_файлу.img> <имя_машины>" >&2
             exit 1
         fi
-
-        # Поиск ID USB-контроллера в строке параметров
-        USB_ID=$(echo "$VM_PARMS" | grep -Po '(?<=-device )[^\s]*usb[^\s]*(?<=id=)[^\s,]+|(?<=-device )[^\s]*xhci[^\s]*(?<=id=)[^\s,]+' | grep -Po '(?<=id=)[^, ]+' | head -n1)
-        USB_BUS="${USB_ID:-usb}.0"
-
-        # Генерация уникального ID для носителя
-        DRIVE_ID="usb-flash-$(date +%s%N | cut -b1-13)"
-
-        echo "Имитация подключения USB-носителя к контроллеру '$USB_BUS' машины '${VM_NAME}'..."
-
-        # Регистрация файл-образа USB-носителя
-        echo "drive_add 0 file=${DISK_PATH},format=raw,if=none,id=${DRIVE_ID}" | socat - UNIX-CONNECT:"$VM_SOCK" >/dev/null
+        DISK_ID=id$(echo -n "$DISK_PATH" | md5sum | cut -c 1-8)
+        # Регистрация
+        echo "drive_add 0 if=none,id=${DISK_ID},file=${DISK_PATH},format=raw" | socat - UNIX-CONNECT:"$VM_SOCK"  # >/dev/null
         sleep 0.5
-
         # Подключение USB-носителя к шине
-        echo "device_add usb-storage,bus=${USB_BUS},drive=${DRIVE_ID},id=${DRIVE_ID}-dev" | socat - UNIX-CONNECT:"$VM_SOCK" >/dev/null
+        echo "device_add usb-storage,drive=${DISK_ID},id=${DISK_ID},bus=usb3.0" | socat - UNIX-CONNECT:"$VM_SOCK"  # >/dev/null
 
         echo "USB-носитель успешно подключен."
         ;;
 
     usb-detach)
-        # Поиск уникального id подключенной флешки в дереве устройств QEMU
-        DEVICE_ID=$(echo "info qtree" | socat - UNIX-CONNECT:"$VM_SOCK" 2>/dev/null | grep -Po 'id "usb-flash-[0-9]+-dev"' | head -n1 | cut -d'"' -f2)
+        DISK_NAME="$2"
+        # Если полный путь не задан, используем образ в пользовательском пуле
+        [ "$(dirname "$DISK_NAME")" = "." ] && DISK_PATH="${USER_POOL}/${DISK_NAME}" || DISK_PATH="$DISK_NAME"
 
-        if [ -n "$DEVICE_ID" ]; then
-            echo "Извлечение USB-носителя из машины '${VM_NAME}'..."
-            echo "device_del $DEVICE_ID" | socat - UNIX-CONNECT:"$VM_SOCK" >/dev/null
-            echo "USB-носитель успешно отключен."
-        else
-            echo "Ошибка: На машине '${VM_NAME}' не найдено подключенных USB-носителей." >&2
+        if [ ! -f "$DISK_PATH" ]; then
+            echo "Ошибка: Образ USB-носителя не задан или не найден." >&2
+            echo "Использование: $0 usb-detach <путь_к_файлу.img> <имя_машины>" >&2
             exit 1
         fi
+        DISK_ID=id$(echo -n "$DISK_PATH" | md5sum | cut -c 1-8)
+        echo "device_del ${DISK_ID}" | socat - UNIX-CONNECT:"$VM_SOCK"
+        echo "drive_del ${DISK_ID}" | socat - UNIX-CONNECT:"$VM_SOCK"
+        exit 0
         ;;
 
     *)
-        # Аргументы со второго по предпоследний (первый это $ACTION, второй это $VM_NAME, который в команде не используется)
+        # Аргументы со второго по предпоследний (первый это $ACTION, последний это $VM_NAME, который в команде не используется)
         EXTRA_ARGS="${@:2:$#-2}"
         echo "$ACTION $EXTRA_ARGS" | socat - UNIX-CONNECT:"$VM_SOCK" | grep -Ev "^\(qemu\)|^QEMU"
         ;;
