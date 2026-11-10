@@ -29,7 +29,6 @@ TOKENS_PATH = ""
 def get_vnc_address(vm_name):
     """
     Ищет сетевой адрес VNC-бэкенда в файле tokens.conf по точному имени ВМ.
-
     Args:
         vm_name (str): Уникальное имя запрашиваемой виртуальной машины.
 
@@ -86,7 +85,7 @@ class VLabManagementHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        """Основной линейный диспетчер маршрутизации входящих HTTP-запросов (GET)."""
+        """Диспетчер маршрутизации входящих HTTP-запросов (GET)."""
         path, _, query_str = self.path.partition('?')
         params = parse_qs(query_str)
         vm_name = params.get("vm", [""])[0].strip()
@@ -100,13 +99,11 @@ class VLabManagementHandler(BaseHTTPRequestHandler):
         # Маршрут API: Асинхронный запуск виртуальной машины
         if path == "/start" and vm_name:
             logging.info(f"API: Запуск виртуальной машины '{vm_name}'")
-            with open(LOG_FILE, "w") as log_file:
-                subprocess.Popen(
-                    ["/usr/local/bin/vmctrl", "start", vm_name],
-                    stdout=log_file, 
-                    stderr=log_file,
-                    start_new_session=True
-                )
+            subprocess.Popen(["/usr/local/bin/vmctrl", "start", vm_name],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEBNULL,
+                start_new_session=True
+            )
             self.send_simple_response(200, b"OK", "text/plain")
             return
 
@@ -123,7 +120,7 @@ class VLabManagementHandler(BaseHTTPRequestHandler):
             icon_path = os.path.join(icons_dir, f"{vm_name}.png") if vm_name else ""
             if not icon_path or not os.path.exists(icon_path):
                 icon_path = os.path.join(icons_dir, "default.png")
-            
+
             if not os.path.exists(icon_path):
                 self.send_simple_response(204, b"", "image/png")
                 return
@@ -135,7 +132,7 @@ class VLabManagementHandler(BaseHTTPRequestHandler):
         if path.startswith("/novnc/"):
             relative_path = path.replace("/novnc/", "", 1)
             file_path = os.path.normpath(os.path.join(webroot, relative_path))
-            
+
             # Проверка Path Traversal исключает чтение системных файлов через '../../'
             if not file_path.startswith(os.path.normpath(webroot)) or not os.path.exists(file_path) or os.path.isdir(file_path):
                 self.send_error(404, "File not found")

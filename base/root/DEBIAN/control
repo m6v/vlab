@@ -3,5 +3,5 @@ Maintainer: Sergey Maksimov <m6v@mail.ru>
 Architecture: all
 Depends: qemu-system-x86, qemu-utils, network-manager, virt-viewer, socat
 Description: Установщик среды виртуализации УТК-СЗИ
-Version: 1.0.242
+Version: 1.0.246
 Installed-Size: 400
