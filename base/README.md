@@ -35,22 +35,17 @@ qemu-img create -f qcow2 -F qcow2 -b $SYSTEM_POOL/rubicon.qcow2 $SKEL_POOL/rubic
 sudo rsync -av --ignore-existing /etc/skel/ /home/$USER/ && sudo chown -R $USER:$USER /home/$USER/
 ```
 
-# Копирование скрипта управления
-```
-cp src_dir/vmctrl /usr/local/bin
-```
-
 # Настройка сети хоста
 
 ## Создание и настройка моста br0 (10.10.0.253/24)
 ```
 # Создание моста br0, если отсутствует
 if ! nmcli connection show br0 >/dev/null 2>&1; then
-    nmcli connection add type bridge con-name br0 ifname br0 ipv4.method manual ipv4.addresses 10.10.0.1/24
+    nmcli connection add type bridge con-name br0 ifname br0 ipv4.method manual ipv4.addresses 10.10.0.254/24
 fi
 
 # Установка параметров моста
-nmcli connection modify br0 bridge.stp no ipv4.method manual ipv4.addresses 10.10.0.1/24
+nmcli connection modify br0 bridge.stp no ipv4.method manual ipv4.addresses 10.10.0.254/24
 
 # Поднятие моста, если не активен
 if ! nmcli -t -f DEVICE connection show --active | grep -q "^br0$"; then
@@ -63,11 +58,11 @@ fi
 ```
 # Создание моста br1, если отсутствует
 if ! nmcli connection show br1 >/dev/null 2>&1; then
-    nmcli connection add type bridge con-name br1 ifname br1 ipv4.method manual ipv4.addresses 10.0.0.253/24
+    nmcli connection add type bridge con-name br1 ifname br1 ipv4.method manual ipv4.addresses 10.0.0.254/24
 fi
 
 # Установка параметров моста
-nmcli connection modify br1 bridge.stp no ipv4.method manual ipv4.addresses 10.0.0.253/24
+nmcli connection modify br1 bridge.stp no ipv4.method manual ipv4.addresses 10.0.0.254/24
 
 # Поднятие моста, если не активен
 if ! nmcli -t -f DEVICE connection show --active | grep -q "^br1$"; then
@@ -92,14 +87,8 @@ chmod 0644 /etc/qemu/bridge.conf
 ```
 /srv
   /qemu
-    /config # шаблоны конфигурационных файлов виртуальных машин
-    /images # базовые qcow2-образы и iso-образы Astra Linux
-    /usr/share/spice-html5 # Spice Javascript client
+    /config # Шаблоны конфигурационных файлов виртуальных машин
+    /images # Базовые qcow2-образы и iso-образ установочного диска Astra Linux
+    tokens.conf # Токены виртуальных машин для подключения по VNC
 /usr/local/bin/vmctrl # Программа управления виртуальными машинами
-```
-
-# Компиляция программ
-```
-go build -o vnc-bridge main.go
-go build -o vmctrl-daemon vmctrl-daemon.go
 ```

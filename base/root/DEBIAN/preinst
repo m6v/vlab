@@ -8,7 +8,7 @@ if [ "$1" = "install" ] || [ "$1" = "upgrade" ]; then
     MISSING_FILES=""
 
     # Список обязательных файлов
-    REQUIRED_FILES="arm-ipc.qcow2 arm-o.qcow2 ipc-master.qcow2 ipc-slave.qcow2 rubicon.qcow2 astra-1.7_x86-64.iso main_update-1.7.8.6-16.09.25_14.55.iso"
+    REQUIRED_FILES="arm-ipc.qcow2 arm-o.qcow2 ipc-master.qcow2 ipc-slave.qcow2 rubicon.qcow2 astra-1.7_x86-64.iso"
 
     for file in $REQUIRED_FILES; do
         if [ ! -f "$TARGET_DIR/$file" ]; then

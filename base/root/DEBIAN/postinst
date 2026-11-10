@@ -59,10 +59,6 @@ case "$1" in
         echo "Создание образа USB-flash накопителя..."
         qemu-img create -f raw $SKEL_POOL/usb.img 1G
         mkfs.vfat -F 32  $SKEL_POOL/usb.img
-
-        echo "Создание лог-файла с правами на запись для всех пользователей..."
-        touch /srv/qemu/vmctrl.log
-        chmod 666 /srv/qemu/vmctrl.log
         ;;
 
     abort-upgrade|abort-remove|abort-deconfigure)

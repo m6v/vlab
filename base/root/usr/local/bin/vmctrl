@@ -1,86 +1,94 @@
 #!/bin/bash
 
 CONFIG_DIR="/srv/qemu/config"
-LOG_FILE="/srv/qemu/vmctrl.log"
+SELF_NAME=$(basename "${BASH_SOURCE[0]}")
+
+# Перенаправление stderr скрипта в logger
+exec 2> >(logger -t $SELF_NAME -p user.err)
 
 # Определение имени пользователя, сидящего за монитором (seat0)
 export SEAT_USER=$(loginctl show-session $(loginctl show-seat seat0 -p ActiveSession --value) -p Name --value)
 
 # Аварийный выход, если на seat0 нет активной сессии
 if [ -z "$SEAT_USER" ]; then
-    echo "$(date '+%Y-%m-%d %H:%M:%S') $(hostname) [Error] Запуск прерван: на seat0 нет активной сессии" >> $LOG_FILE
+    echo "Ошибка: Запуск прерван: на seat0 нет активной сессии" | tee /dev/stderr
     exit 1
 fi
 
-# Переключение на пользователя, только если мы еще не под ним (защита от бесконечной рекурсии)
+# Переключение на пользователя, только если скрипт запущен не под ним (защита от бесконечной рекурсии)
 if [ "$(whoami)" != "$SEAT_USER" ]; then
     export USER="$SEAT_USER"
-    export HOME="/home/$USER"
+    export HOME=$(getent passwd "$USER" | cut -d ':' -f 6)
     exec sudo -u "$USER" HOME="$HOME" USER="$USER" "$0" "$@"
 fi
 
-# Логирование исполняемой команды
-echo "$(date '+%Y-%m-%d %H:%M:%S') $(hostname) [Info] seat0:$USER $0 $*" >> $LOG_FILE
-
 ACTION="$1"
 
+# Вывод имен запущенных виртуальных машин
 if [ "$ACTION" = "list" ]; then
     # Поиск PID процессов и объединение их через запятую для утилиты ps
     PIDS=$(pgrep -f "qemu-system-x86_64.*-name" | paste -sd ',' -)
     if [ -n "$PIDS" ]; then
-        # Извлечение и склеивание имен ВМ в одну строку через пробел
+        # Извлечение и склеивание имен виртуальных машин в одну строку через пробел
         ps -p "$PIDS" -o args= | grep -Po '(?<=-name )[^\s\b]+' | paste -sd ' ' -
         exit 0
     fi
     exit 1
 fi
 
-# Проверка наличия по крайней мере еще одного аргумента (имени ВМ)
+# Проверка наличия по крайней мере еще одного аргумента (имени виртуальной машины)
 if [ -z "$2" ]; then
-    echo "Ошибка: Не указано имя виртуальной машины." >&2
-    echo "Использование: $0 <list|info|start|stop|resume|reset|powerdown|quit|kill> <имя_машины> или $0 list" >&2
+    echo "Ошибка: Не указано имя виртуальной машины." | tee /dev/stderr
+    echo "Использование: $SELF_NAME <list|info|start|stop|resume|reset|powerdown|quit|kill> <имя_машины> или $SELF_NAME list"
+    echo "Синтаксис команд управления см. на https://www.qemu.org/docs/master/system/monitor.html"
     exit 1
 fi
 
-# Последний аргумент всегда имя ВМ, выполняем его экспорт, так как испольуем в envsubst
+# Последний аргумент всегда имя виртуальной машины
 export VM_NAME="${@:$#}"
 
-# Каталог для управляющего сокета ВМ
-mkdir -p /tmp/qemu/$USER
-chmod 700 /tmp/qemu/$USER
-# Управляющий сокет ВМ
-VM_SOCK=/tmp/qemu/$USER/$VM_NAME.sock
 # Пул с образами виртуальных машин, USB-дисков и т.п.
-USER_POOL="/home/$USER/.local/share/qemu/images"
+USER_POOL="$HOME/.local/share/qemu/images"
+
+# Проверка наличия файла конфигурации
+CONF_FILE="${CONFIG_DIR}/${VM_NAME}.conf"
+if [ ! -f "$CONF_FILE" ]; then
+    echo "Ошибка: Файл конфигурации для '${VM_NAME}' не найден." | tee /dev/stderr
+    exit 1
+fi
+
+# Подготовка аргументов для qemu-system на основе конфигурационного файла
+VM_PARMS=$(envsubst '$USER,$HOME,$VM_NAME' < "$CONF_FILE")
+
+# Определение номера порта VNC с учетом базы 5900 и номера дисплея
+VNC_ADDR="127.0.0.1:$((5900 + $(echo "$VM_PARMS" | grep -Po '(?<=-vnc 0.0.0.0:)[0-9]+' || echo 0)))"
+
+# Поиск подстроки -spice и взятие всего до ближайшего дефиса в круглые скобки
+if [[ "$VM_PARMS" =~ -spice[[:space:]]+([^-]+) ]]; then
+    eval "declare $(echo "${BASH_REMATCH[1]}" | tr ',' ' ')"
+fi
+SPICE_ADDR="${addr}:${port}"
+
+# Определение управляющего сокета
+VM_MONITOR=$(echo $VM_PARMS | grep -oP -- '-monitor \K[^,]*')
+if [[ "$VM_MONITOR" =~ "unix:" ]]; then
+    VM_SOCK_FILE=$(echo "$VM_MONITOR" | cut -d: -f2)
+    VM_SOCK_DIR=$(dirname $VM_SOCK_FILE)
+    # Создание каталога для управляющего сокета
+    mkdir -p $VM_SOCK_DIR
+    chmod 700 $VM_SOCK_DIR
+    VM_SOCK=UNIX-CONNECT:$VM_SOCK_FILE
+elif [[ "$VM_MONITOR" =~ "tcp:" ]]; then
+    VM_SOCK_PORT=$(echo "$VM_MONITOR" | cut -d: -f3)
+    VM_SOCK=TCP:127.0.0.1:$VM_SOCK_PORT
+else
+    echo "Ошибка: Управляющий сокет для '${VM_NAME}' не найден." | tee /dev/stderr
+    exit 1
+fi
 
 if [ "$ACTION" = "start" ]; then
-    CONF_FILE="${CONFIG_DIR}/${VM_NAME}.conf"
-
-    # Проверка наличия файла конфигурации
-    if [ ! -f "$CONF_FILE" ]; then
-        echo "Ошибка: Файл конфигурации для '${VM_NAME}' не найден." >&2
-        exit 1
-    fi
-
-    # Выполняем экспорт, так как испольуем переменную в envsubst
-    export HOME=/home/$USER
-
-    # Подготовка аргументов для qemu-system на основе конфигурационного файла
-    VM_PARMS=$(envsubst '$USER,$HOME,$VM_NAME' < "$CONF_FILE")
-
-    # Определение номера порта с учетом базы 5900 и номера дисплея
-    VNC_ADDR="127.0.0.1:$((5900 + $(echo "$VM_PARMS" | grep -Po '(?<=-vnc 0.0.0.0:)[0-9]+' || echo 0)))"
-
-    # Поиск подстроки -spice и взятие всего до ближайшего дефиса в круглые скобки
-    if [[ "$VM_PARMS" =~ -spice[[:space:]]+([^-]+) ]]; then
-        eval "declare $(echo "${BASH_REMATCH[1]}" | tr ',' ' ')"
-    fi
-    SPICE_ADDR="${addr}:${port}"
-
     # Запуск VM_NAME, если не запущена
     if ! pgrep -f "qemu-system-x86_64.*-name ${VM_NAME}\b" > /dev/null; then
-        # Удаление управляющего сокета, если остался после некорректной остановки
-        [ -S "$VM_SOCK" ] && rm -f "$VM_SOCK"
         eval "qemu-system-x86_64 $(echo "$VM_PARMS" | paste -sd ' ' -)"
         sleep 1
     fi
@@ -99,11 +107,6 @@ if [ "$ACTION" = "kill" ]; then
     exit $?
 fi
 
-if [ ! -S "$VM_SOCK" ]; then
-    echo "Ошибка: Управляющий сокет для '${VM_NAME}' не найден." >&2
-    exit 1
-fi
-
 # Синонимы команд
 [ "$ACTION" = "pause" ] && ACTION="stop"
 [ "$ACTION" = "resume" ] && ACTION="cont"
@@ -118,17 +121,16 @@ case "$ACTION" in
         [ "$(dirname "$DISK_NAME")" = "." ] && DISK_PATH="${USER_POOL}/${DISK_NAME}" || DISK_PATH="$DISK_NAME"
 
         if [ ! -f "$DISK_PATH" ]; then
-            echo "Ошибка: Образ USB-носителя не задан или не найден." >&2
-            echo "Использование: $0 usb-attach <путь_к_файлу.img> <имя_машины>" >&2
+            echo "Ошибка: Образ USB-носителя не задан или не найден." | tee /dev/stderr
+            echo "Использование: $SELF_NAME usb-attach <путь_к_файлу.img> <имя_машины>"
             exit 1
         fi
         DISK_ID=id$(echo -n "$DISK_PATH" | md5sum | cut -c 1-8)
-        # Регистрация
-        echo "drive_add 0 if=none,id=${DISK_ID},file=${DISK_PATH},format=raw" | socat - UNIX-CONNECT:"$VM_SOCK"  # >/dev/null
-        sleep 0.5
-        # Подключение USB-носителя к шине
-        echo "device_add usb-storage,drive=${DISK_ID},id=${DISK_ID},bus=usb3.0" | socat - UNIX-CONNECT:"$VM_SOCK"  # >/dev/null
-
+        # Регистрация USB-носителя на хосте 
+        echo "drive_add 0 if=none,id=${DISK_ID},file=${DISK_PATH},format=raw" | socat - "$VM_SOCK"  # >/dev/null
+        sleep 1
+        # Подключение USB-носителя к шине usb3.0
+        echo "device_add usb-storage,drive=${DISK_ID},id=${DISK_ID},bus=usb3.0" | socat - "$VM_SOCK"  # >/dev/null
         echo "USB-носитель успешно подключен."
         ;;
 
@@ -138,19 +140,23 @@ case "$ACTION" in
         [ "$(dirname "$DISK_NAME")" = "." ] && DISK_PATH="${USER_POOL}/${DISK_NAME}" || DISK_PATH="$DISK_NAME"
 
         if [ ! -f "$DISK_PATH" ]; then
-            echo "Ошибка: Образ USB-носителя не задан или не найден." >&2
-            echo "Использование: $0 usb-detach <путь_к_файлу.img> <имя_машины>" >&2
+            echo "Ошибка: Образ USB-носителя не задан или не найден." | tee /dev/stderr
+            echo "Использование: $SELF_NAME usb-detach <путь_к_файлу.img> <имя_машины>"
             exit 1
         fi
         DISK_ID=id$(echo -n "$DISK_PATH" | md5sum | cut -c 1-8)
-        echo "device_del ${DISK_ID}" | socat - UNIX-CONNECT:"$VM_SOCK"
-        echo "drive_del ${DISK_ID}" | socat - UNIX-CONNECT:"$VM_SOCK"
+        # Отключение USB-носителя от шины usb3.0
+        echo "device_del ${DISK_ID}" | socat - "$VM_SOCK"
+        sleep 1
+        # Анулирование регистрация USB-носителя на хосте
+        echo "drive_del ${DISK_ID}" | socat - "$VM_SOCK"
         exit 0
         ;;
 
     *)
         # Аргументы со второго по предпоследний (первый это $ACTION, последний это $VM_NAME, который в команде не используется)
+        # Синтаксис должен соответствовать протоколу HMP (Human Monitor Interface) [https://www.qemu.org/docs/master/system/monitor.html]
         EXTRA_ARGS="${@:2:$#-2}"
-        echo "$ACTION $EXTRA_ARGS" | socat - UNIX-CONNECT:"$VM_SOCK" | grep -Ev "^\(qemu\)|^QEMU"
+        echo "$ACTION $EXTRA_ARGS" | socat - "$VM_SOCK" | grep -Ev "^\(qemu\)|^QEMU"
         ;;
 esac
