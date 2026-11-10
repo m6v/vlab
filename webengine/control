@@ -1,4 +1,5 @@
 Package: vlab-webengine
+Version: 1.1
 Section: utils
 Priority: optional
 Architecture: amd64
