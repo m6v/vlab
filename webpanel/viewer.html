@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>VNC Viewer</title>
+    <style>
+        html, body, #screen {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #1e1e1e;
+        }
+        #status-overlay {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #cccccc;
+            font-family: system-ui, -apple-system, sans-serif;
+            font-size: 16px;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="status-overlay">Подключение к консоли...</div>
+    <div id="screen"></div>
+
+    <script type="module">
+        import RFB from '/novnc/core/rfb.js';
+
+        const overlay = document.getElementById('status-overlay');
+        const screen = document.getElementById('screen');
+        const params = new URLSearchParams(window.location.search);
+        const token = params.get('token');
+        const proxyPort = params.get('port') || '8080';
+
+        if (!token) {
+            overlay.textContent = 'Ошибка: не указан токен виртуальной машины';
+        } else {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.hostname}:${proxyPort}/ws?token=${encodeURIComponent(token)}`;
+
+            const rfb = new RFB(screen, wsUrl, {
+                wsProtocols: ['binary'],
+                focusOnClick: true,
+                pingInterval: 10
+            });
+
+            rfb.scaleViewport = true;
+
+            rfb.addEventListener('connect', () => {
+                overlay.style.display = 'none';
+                setTimeout(() => rfb.focus(), 150);
+            });
+
+            rfb.addEventListener('disconnect', (e) => {
+                overlay.style.display = 'block';
+                overlay.textContent = e.detail.clean
+                    ? 'Сеанс завершен'
+                    : 'Соединение потеряно';
+            });
+        }
+    </script>
+</body>
+</html>

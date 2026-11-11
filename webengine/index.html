@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>{{.VMName}}</title>
+    <title>${vm_name}</title>
     <link id="dynamic-favicon" rel="icon" type="image/png" href="/favicon.ico">
 
     <!-- Базовые стили noVNC -->
@@ -29,7 +29,7 @@
             pointer-events: none;
         }
 
-        /* Очищенные стили экрана запуска из pve.css */
+        /* Очищенные стили экрана запуска */
         div:not(#noVNC_container) {
             border-radius: unset !important;
         }
@@ -86,17 +86,17 @@
 
     <div id="offline-ui" class="noVNC_center">
         <div id="pve_start_dlg" class="noVNC_open">
-            <div id="pve_start_info">Виртуальная машина {{.VMName}}<br>не запущена</div>
-            <div id="pve_start_button" onclick="VLabConsole.launchVM()">
+            <div id="pve_start_info">Виртуальная машина ${vm_name}<br>не запущена</div>
+            <div id="pve_start_button" onclick="VMConsole.launchVM()">
                 <div><img alt="" src="/novnc/app/images/power.svg"><span id="startBtnText">Запустить</span></div>
             </div>
         </div>
     </div>
 
     <script type="text/javascript">
-        const VLabConsole = {
-            vmName: "{{.VMName}}",
-            proxyPort: "{{.ProxyPort}}",
+        const VMConsole = {
+            vmName: "${vm_name}",
+            proxyPort: "${proxy_port}",
             moduleUrl: "/novnc/core/rfb.js",
 
             init() {
@@ -177,7 +177,7 @@
             }
         };
 
-        window.addEventListener('DOMContentLoaded', () => VLabConsole.init());
+        window.addEventListener('DOMContentLoaded', () => VMConsole.init());
     </script>
 </body>
 </html>

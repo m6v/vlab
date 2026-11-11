@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>УТК-СЗИ</title>
-    <link rel="icon" href="virt-manager.png" type="image/png">
+    <link rel="icon" href="/virt-manager.png" type="image/png">
     <style>
         :root {
             color-scheme: light dark;
@@ -13,11 +13,11 @@
             --border-color: ButtonBorder;
             --sidebar-bg: ButtonFace;
             --sidebar-hover: Highlight;
-            --pve-orange: AccentColor;      
+            --pve-orange: AccentColor;
             --node-offline: GrayText;
             --node-active: color-mix(in srgb, CanvasText 85%, transparent);
             --vm-offline: GrayText;
-            --vm-online: var(--node-active); 
+            --vm-online: var(--node-active);
             --bg-placeholder: Field;
         }
 
@@ -101,161 +101,155 @@
                 <h2>Консоль не выбрана</h2>
                 <p>Выберите виртуальную машину из списка слева для подключения</p>
             </div>
-            <iframe id="vnc-frame" sandbox="allow-scripts allow-same-origin allow-forms" allow="clipboard-read; clipboard-write"></iframe>
+            <iframe id="vnc-frame"></iframe>
         </div>
     </div>
 
     <script>
-        let selectedVmToken = null;
-        let serverConfig = { pythonPort: 8000, proxyPort: 8080 };
+        const WebPanel = {
+            selectedVmToken: null,
+            serverConfig: { pythonPort: 8000, proxyPort: 8080 },
 
-        document.addEventListener('DOMContentLoaded', () => {
-            initPanel();
-        });
-
-        // Генерация шестнадцатеричного хеша
-        function StringToHash(str) {
-            let hash = 0;
-            if (str.length === 0) return 'i00000000';
-            for (let i = 0; i < str.length; i++) {
-                const chr = str.charCodeAt(i);
-                hash = ((hash << 5) - hash) + chr;
-                hash |= 0;
-            }
-            // Для совместимости со стандартами W3C первым символом вставляем букву
-            return 'i' + Math.abs(hash).toString(16);
-        }
-
-        async function initPanel() {
-            try {
-                const response = await fetch('/api/tokens');
-                if (!response.ok) return;
-                const data = await response.json();
-
-                if (data.config) serverConfig = data.config;
-
-                const treeData = {};
-                if (data.vms) {
-                    data.vms.forEach(vm => {
-                        const hostGroup = `${vm.ip}`;
-                        if (!treeData[hostGroup]) {
-                            treeData[hostGroup] = { ip: vm.ip, vms: [] };
-                        }
-                        treeData[hostGroup].vms.push(vm);
-                    });
+            stringToHash(str) {
+                let hash = 0;
+                if (str.length === 0) return 'i00000000';
+                for (let i = 0; i < str.length; i++) {
+                    const chr = str.charCodeAt(i);
+                    hash = ((hash << 5) - hash) + chr;
+                    hash |= 0;
                 }
+                return 'i' + Math.abs(hash).toString(16);
+            },
 
-                buildTree(treeData);
-                checkStatuses();
-                setInterval(checkStatuses, 3000);
+            async init() {
+                try {
+                    const response = await fetch('/api/tokens');
+                    if (!response.ok) return;
+                    const data = await response.json();
 
-            } catch (e) { console.error("Ошибка инициализации дерева:", e); }
-        }
+                    if (data.config) this.serverConfig = data.config;
 
-        function buildTree(treeData) {
-            const treeContainer = document.getElementById('pve-tree');
-            treeContainer.textContent = '';
+                    const treeData = {};
+                    if (data.vms) {
+                        data.vms.forEach(vm => {
+                            const hostGroup = String(vm.ip);
+                            if (!treeData[hostGroup]) {
+                                treeData[hostGroup] = { ip: vm.ip, vms: [] };
+                            }
+                            treeData[hostGroup].vms.push(vm);
+                        });
+                    }
 
-            Object.entries(treeData).forEach(([hostName, hostInfo]) => {
-                const hostBlock = document.createElement('div');
-                const nodeItem = document.createElement('div');
-                nodeItem.className = 'node-item';
-                nodeItem.setAttribute('data-host', hostName);
+                    this.buildTree(treeData);
+                    await this.checkStatuses();
+                    setInterval(() => this.checkStatuses(), 3000);
+                } catch (e) {
+                    console.error("Ошибка инициализации дерева:", e);
+                }
+            },
 
-                const toggleSpan = document.createElement('span');
-                toggleSpan.className = 'node-toggle';
-                toggleSpan.textContent = '▼';
-                nodeItem.appendChild(toggleSpan);
+            buildTree(treeData) {
+                const treeContainer = document.getElementById('pve-tree');
+                treeContainer.textContent = '';
 
-                const nameSpan = document.createElement('span');
-                nameSpan.textContent = hostName;
-                nodeItem.appendChild(nameSpan);
+                Object.entries(treeData).forEach(([hostName, hostInfo]) => {
+                    const hostBlock = document.createElement('div');
+                    const nodeItem = document.createElement('div');
+                    nodeItem.className = 'node-item';
+                    nodeItem.dataset.host = hostName;
 
-                const vmSublist = document.createElement('ul');
-                vmSublist.className = 'vm-sublist';
+                    const toggleSpan = document.createElement('span');
+                    toggleSpan.className = 'node-toggle';
+                    toggleSpan.textContent = '▼';
+                    nodeItem.appendChild(toggleSpan);
 
-                hostInfo.vms.forEach(vm => {
-                    const vmLi = document.createElement('li');
-                    vmLi.className = 'vm-item';
+                    const nameSpan = document.createElement('span');
+                    nameSpan.textContent = hostName;
+                    nodeItem.appendChild(nameSpan);
 
-                    // Защита элемента от коллизий одинаковых имен с помощью уникального UID 
-                    vmLi.id = StringToHash(`${vm.ip}-${vm.token}`); 
-                    vmLi.textContent = vm.token; 
+                    const vmSublist = document.createElement('ul');
+                    vmSublist.className = 'vm-sublist';
 
-                    vmLi.setAttribute('data-token', vm.token);
-                    vmLi.setAttribute('data-ip', vm.ip);
+                    hostInfo.vms.forEach(vm => {
+                        const vmLi = document.createElement('li');
+                        vmLi.className = 'vm-item';
+                        vmLi.id = this.stringToHash(`${vm.ip}-${vm.token}`);
+                        vmLi.textContent = vm.token;
+                        vmLi.dataset.token = vm.token;
+                        vmLi.dataset.ip = vm.ip;
 
-                    vmLi.addEventListener('click', () => {
-                        document.querySelectorAll('.vm-item').forEach(el => el.classList.remove('active'));
-                        vmLi.classList.add('active');
-                        selectedVmToken = vm.token;
+                        vmLi.addEventListener('click', () => {
+                            document.querySelectorAll('.vm-item').forEach(el => el.classList.remove('active'));
+                            vmLi.classList.add('active');
+                            this.selectedVmToken = vm.token;
 
-                        document.getElementById('placeholder').style.display = 'none';
-                        const iframe = document.getElementById('vnc-frame');
-                        iframe.style.display = 'block';
+                            document.getElementById('placeholder').style.display = 'none';
+                            const iframe = document.getElementById('vnc-frame');
+                            iframe.style.display = 'block';
 
-                        // Динамическая подстановка прокси-порта из конфигурации бэкенда
-                        iframe.src = `/novnc/vnc.html?autoconnect=true&resize=scale&host=${vm.ip}&port=${serverConfig.proxyPort}&path=?token=${vm.token}`;
+                            const params = new URLSearchParams({
+                                token: vm.token,
+                                port: String(this.serverConfig.proxyPort)
+                            });
+                            iframe.src = `/viewer.html?${params.toString()}`;
+                        });
+                        vmSublist.appendChild(vmLi);
                     });
-                    vmSublist.appendChild(vmLi);
+
+                    nodeItem.addEventListener('click', () => {
+                        nodeItem.dataset.userToggled = 'true';
+                        nodeItem.classList.toggle('collapsed');
+                        vmSublist.classList.toggle('hidden');
+                    });
+
+                    hostBlock.appendChild(nodeItem);
+                    hostBlock.appendChild(vmSublist);
+                    treeContainer.appendChild(hostBlock);
                 });
+            },
+            async checkStatuses() {
+                try {
+                    const response = await fetch('/api/ping');
+                    if (!response.ok) return;
+                    const states = await response.json();
 
-                nodeItem.addEventListener('click', () => {
-                    nodeItem.classList.toggle('collapsed');
-                    vmSublist.classList.toggle('hidden');
-                });
+                    Object.entries(states).forEach(([stateKey, isOnline]) => {
+                        const sepIdx = stateKey.indexOf(':');
+                        const ip = stateKey.slice(0, sepIdx);
+                        const token = stateKey.slice(sepIdx + 1);
+                        const el = document.getElementById(this.stringToHash(`${ip}-${token}`));
 
-                hostBlock.appendChild(nodeItem);
-                hostBlock.appendChild(vmSublist);
-                treeContainer.appendChild(hostBlock);
-            });
-        }
-
-        async function checkStatuses() {
-            try {
-                const response = await fetch('/api/ping');
-                if (!response.ok) return;
-                const states = await response.json();
-
-                // Окрашивание виртуалки online/offline в DOM
-                Object.entries(states).forEach(([stateKey, isOnline]) => {
-                    const [ip, token] = stateKey.split(':', 2);
-                    const targetUid = StringToHash(`${ip}-${token}`);
-                    const el = document.getElementById(targetUid);
-
-                    if (el) {
-                        if (isOnline) el.classList.add('online');
-                        else el.classList.remove('online');
-                    }
-                });
-
-                document.querySelectorAll('.node-item').forEach(node => {
-                    const sublist = node.nextElementSibling;
-                    // Проверка, есть ли внутри этой папки хотя бы одна работающая машина
-                    const hasOnlineVms = sublist && sublist.querySelector('.online');
-
-                    if (hasOnlineVms) {
-                        // Если есть живые машины, окрашивание папки в активный цвет
-                        node.classList.add('node-active');
-
-                        // Если папка была свернута, но в ней включили виртуалку — раскрываем её
-                        if (node.classList.contains('collapsed')) {
-                            node.classList.remove('collapsed');
-                            sublist.classList.remove('hidden');
+                        if (el) {
+                            el.classList.toggle('online', Boolean(isOnline));
                         }
-                    } else {
-                        // Если все машины выключены — тушим подсветку папки
-                        node.classList.remove('node-active');
+                    });
 
-                        // Если папка пустая и еще не свернута — захлопываем её
-                        if (!node.classList.contains('collapsed')) {
-                            node.classList.add('collapsed');
-                            sublist.classList.add('hidden');
+                    document.querySelectorAll('.node-item').forEach(node => {
+                        const sublist = node.nextElementSibling;
+                        const hasOnlineVms = Boolean(sublist && sublist.querySelector('.online'));
+
+                        if (hasOnlineVms) {
+                            node.classList.add('node-active');
+                            if (node.classList.contains('collapsed') && !node.dataset.userToggled) {
+                                node.classList.remove('collapsed');
+                                sublist.classList.remove('hidden');
+                            }
+                        } else {
+                            node.classList.remove('node-active');
+                            delete node.dataset.userToggled;
+                            if (!node.classList.contains('collapsed')) {
+                                node.classList.add('collapsed');
+                                sublist.classList.add('hidden');
+                            }
                         }
-                    }
-                });
-            } catch (e) { console.error("Ошибка опроса статусов:", e); }
-        }
+                    });
+                } catch (e) {
+                    console.error("Ошибка опроса статусов:", e);
+                }
+            }
+        };
+
+        document.addEventListener('DOMContentLoaded', () => WebPanel.init());
     </script>
 </body>
 </html>

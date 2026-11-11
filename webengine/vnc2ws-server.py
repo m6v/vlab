@@ -1,204 +1,208 @@
 #!/usr/bin/env python3
+import argparse
+import html
+import logging
+import mimetypes
 import os
 import re
 import socket
-import logging
-import argparse
 import subprocess
-import mimetypes
-from urllib.parse import parse_qs
+from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from string import Template
+from typing import Optional, Tuple
+from urllib.parse import parse_qs, urlsplit
 
-# Регулярное выражение для предотвращения атак типа Command Injection через имя ВМ
-VM_NAME_SAFE_REGEXP = re.compile(r'^[a-zA-Z0-9_-]+$')
+VM_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
+TOKEN_PATTERN = re.compile(r"^([a-zA-Z0-9_-]+):\s*([0-9.]+):(\d+)")
 
-# Шаблон парсинга строк tokens.conf: Имя_ВМ:Локальный_IP:Порт_VNC
-TOKEN_REGEXP = re.compile(r'^([a-zA-Z0-9_-]+):\s*([0-9.]+):(\d+)')
+ICONS_DIR = "/usr/share/pixmaps"
+VMCTRL_BIN = "/usr/local/bin/vmctrl"
 
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    datefmt='%Y/%m/%d %H:%M:%S'
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y/%m/%d %H:%M:%S",
 )
 
-# Глобальная переменная для пути к конфигурации токенов (инициализируется в __main__)
-TOKENS_PATH = ""
 
-
-def get_vnc_address(vm_name):
-    """
-    Ищет сетевой адрес VNC-бэкенда в файле tokens.conf по имени ВМ.
-    Args:
-        vm_name (str): Уникальное имя запрашиваемой виртуальной машины.
-
-    Returns:
-        tuple (str, int) или None: Кортеж (IP-адрес, Порт) при успехе, иначе None.
-    """
-    if not os.path.exists(TOKENS_PATH) or not os.access(TOKENS_PATH, os.R_OK):
-        logging.error(f"Файл конфигурации токенов недоступен для чтения: {TOKENS_PATH}")
-        return None
-    with open(TOKENS_PATH, 'r', encoding='utf-8') as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith('#'):
-                continue
-            match = TOKEN_REGEXP.match(line)
-            if match and match.group(1) == vm_name:
-                return match.group(2), int(match.group(3))
+def resolve_vnc_target(tokens_path: str, vm_name: str) -> Optional[Tuple[str, int]]:
+    """Ищет (IP, порт) ВМ в файле токенов."""
+    try:
+        with open(tokens_path, "r", encoding="utf-8") as f:
+            for raw_line in f:
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                match = TOKEN_PATTERN.match(line)
+                if match and match.group(1) == vm_name:
+                    return match.group(2), int(match.group(3))
+    except OSError as exc:
+        logging.error("Не удалось прочитать %s: %s", tokens_path, exc)
     return None
 
 
-def is_vm_running(vnc_addr_tuple):
-    """
-    Опрашивает статус ВМ методом проверки доступности её локального VNC-порта.
-    Args:
-        vnc_addr_tuple (tuple): Кортеж (IP-адрес, Порт) целевой ВМ.
-    Returns:
-        bool: True, если порт открыт и отвечает (RUNNING), иначе False (STOPPED).
-    """
-    if not vnc_addr_tuple:
+def is_port_open(target: Optional[Tuple[str, int]], timeout: float = 0.5) -> bool:
+    """Проверяет доступность локального VNC-порта."""
+    if not target:
         return False
     try:
-        host, port = vnc_addr_tuple
-        # Таймаут 0.5 сек предотвращает блокирование ресурсов
-        # рабочего HTTP-потока при опросе зависшего сокета
-        with socket.create_connection((host, port), timeout=0.5):
+        with socket.create_connection(target, timeout=timeout):
             return True
-    except Exception:
+    except OSError:
         return False
 
 
-class VLabManagementHandler(BaseHTTPRequestHandler):
-    """Обработчик входящих HTTP REST API и статических UI запросов веб-панели."""
+def is_path_within(target_path: str, base_dir: str) -> bool:
+    """Защита от выхода за пределы каталога (Path Traversal)."""
+    real_base = os.path.realpath(base_dir)
+    real_target = os.path.realpath(target_path)
+    return os.path.commonpath([real_base, real_target]) == real_base
 
-    def log_message(self, format, *args):
-        """Подавление стандартных отладочных логов BaseHTTPRequestHandler в stdout."""
-        logging.debug(format % args)
 
-    def send_simple_response(self, code, body, content_type):
-        """
-        Унифицированный хелпер для формирования и отправки стандартных ответов HTTP.
-        Заголовок CORS добавлен для предотвращения блокировок браузера
-        при AJAX-опросе статуса ВМ с фронтенда.
-        """
-        self.send_response(code)
+class VMConsoleHandler(BaseHTTPRequestHandler):
+    """Обработчик HTTP-запросов веб-консоли виртуальной машины."""
+
+    def log_message(self, format: str, *args) -> None:
+        logging.debug(format, *args)
+
+    def send_payload(self, status: HTTPStatus, body: bytes, content_type: str) -> None:
+        self.send_response(status)
         self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(body)
 
-    def do_GET(self):
-        """Диспетчер маршрутизации входящих HTTP-запросов (GET)."""
-        path, _, query_str = self.path.partition('?')
-        params = parse_qs(query_str)
+    def send_file(self, file_path: str, default_mime: str = "application/octet-stream") -> None:
+        try:
+            with open(file_path, "rb") as f:
+                data = f.read()
+        except OSError:
+            self.send_error(HTTPStatus.NOT_FOUND, "File not found")
+            return
+
+        mime_type, _ = mimetypes.guess_type(file_path)
+        self.send_payload(HTTPStatus.OK, data, mime_type or default_mime)
+
+    def do_GET(self) -> None:
+        parsed_url = urlsplit(self.path)
+        route = parsed_url.path
+        params = parse_qs(parsed_url.query)
         vm_name = params.get("vm", [""])[0].strip()
 
-        # Проверка имени для защиты от инъекций в bash утилиты vmctrl
-        if vm_name and not VM_NAME_SAFE_REGEXP.match(vm_name):
-            self.send_error(400, "Invalid VM name format")
+        if vm_name and not VM_NAME_PATTERN.match(vm_name):
+            self.send_error(HTTPStatus.BAD_REQUEST, "Invalid VM name format")
             return
 
-        # Маршрут API: Асинхронный запуск виртуальной машины
-        if path == "/start" and vm_name:
-            logging.info(f"API: Запуск виртуальной машины '{vm_name}'")
-            subprocess.Popen(
-                ["/usr/local/bin/vmctrl", "start", vm_name],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True
-            )
-            self.send_simple_response(200, b"OK", "text/plain")
+        if route == "/":
+            self.handle_index(vm_name)
+        elif route == "/status":
+            self.handle_status(vm_name)
+        elif route == "/start":
+            self.handle_start(vm_name)
+        elif route == "/favicon.ico":
+            self.handle_favicon(vm_name)
+        elif route.startswith("/novnc/"):
+            self.handle_novnc_static(route[len("/novnc/"):])
+        else:
+            self.send_error(HTTPStatus.NOT_FOUND, "Not Found")
+
+    def handle_index(self, vm_name: str) -> None:
+        if not vm_name:
+            self.send_error(HTTPStatus.BAD_REQUEST, "Parameter 'vm' is required")
             return
 
-        # Маршрут API: Запрос текущего состояния ВМ (RUNNING/STOPPED)
-        if path == "/status":
-            vnc_addr = get_vnc_address(vm_name) if vm_name else None
-            status = "RUNNING" if is_vm_running(vnc_addr) else "STOPPED"
-            self.send_simple_response(200, status.encode(), "text/plain")
+        args = self.server.args
+        if not resolve_vnc_target(args.token_source, vm_name):
+            self.send_error(HTTPStatus.NOT_FOUND, f"VM '{vm_name}' not registered")
             return
 
-        # Маршрут UI: Динамическая раздача цветных иконок из системного пути
-        if path == "/favicon.ico":
-            icons_dir = "/usr/share/pixmaps"
-            icon_path = os.path.join(icons_dir, f"{vm_name}.png") if vm_name else ""
-            if not icon_path or not os.path.exists(icon_path):
-                icon_path = os.path.join(icons_dir, "default.png")
-
-            if not os.path.exists(icon_path):
-                self.send_simple_response(204, b"", "image/png")
-                return
-            with open(icon_path, 'rb') as f:
-                self.send_simple_response(200, f.read(), "image/png")
+        template_file = os.path.join(args.webroot, "index.html")
+        try:
+            with open(template_file, "r", encoding="utf-8") as f:
+                raw_html = f.read()
+        except OSError:
+            logging.error("Шаблон не найден: %s", template_file)
+            self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "UI Template missing")
             return
 
-        # Маршрут UI: Раздача статических ресурсов noVNC из системного каталога
-        if path.startswith("/novnc/"):
-            novncroot = self.server.novncroot
-            relative_path = path.replace("/novnc/", "", 1)
-            file_path = os.path.normpath(os.path.join(novncroot, relative_path))
+        rendered = Template(raw_html).safe_substitute(
+            vm_name=html.escape(vm_name),
+            proxy_port=args.proxy_port,
+        )
+        self.send_payload(HTTPStatus.OK, rendered.encode("utf-8"), "text/html; charset=utf-8")
 
-            # Проверка Path Traversal исключает чтение системных файлов через '../../'
-            if (
-                not file_path.startswith(novncroot + os.sep)
-                or not os.path.exists(file_path)
-                or os.path.isdir(file_path)
-            ):
-                self.send_error(404, "File not found")
-                return
+    def handle_status(self, vm_name: str) -> None:
+        target = resolve_vnc_target(self.server.args.token_source, vm_name) if vm_name else None
+        status = b"RUNNING" if is_port_open(target) else b"STOPPED"
+        self.send_payload(HTTPStatus.OK, status, "text/plain; charset=utf-8")
 
-            content_type, _ = mimetypes.guess_type(file_path)
-            with open(file_path, 'rb') as f:
-                self.send_simple_response(200, f.read(), content_type or "text/plain")
+    def handle_start(self, vm_name: str) -> None:
+        if not vm_name:
+            self.send_error(HTTPStatus.BAD_REQUEST, "Parameter 'vm' is required")
             return
 
-        # Маршрут UI: Рендеринг главной страницы консоли из каталога webroot
-        if path == "/":
-            if not vm_name:
-                self.send_error(400, "Parameter 'vm' is required")
-                return
-            if not get_vnc_address(vm_name):
-                self.send_error(404, f"Not Found: VM '{vm_name}' not registered in {TOKENS_PATH}")
-                return
+        logging.info("API: Запуск виртуальной машины '%s'", vm_name)
+        subprocess.Popen(
+            [VMCTRL_BIN, "start", vm_name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        self.send_payload(HTTPStatus.OK, b"OK", "text/plain; charset=utf-8")
 
-            template_path = os.path.join(self.server.webroot, "index.html")
-            if not os.path.exists(template_path):
-                self.send_error(500, f"Internal Server Error: UI Template missing at {template_path}")
-                return
+    def handle_favicon(self, vm_name: str) -> None:
+        default_icon = os.path.join(ICONS_DIR, "default.png")
+        candidate = os.path.join(ICONS_DIR, f"{vm_name}.png") if vm_name else default_icon
 
-            with open(template_path, 'r', encoding='utf-8') as f:
-                html = (
-                    f.read()
-                    .replace("{{.VMName}}", vm_name)
-                    .replace("{{.ProxyPort}}", str(self.server.proxy_port))
-                )
-            self.send_simple_response(200, html.encode('utf-8'), "text/html; charset=utf-8")
+        if not os.path.isfile(candidate):
+            candidate = default_icon
+
+        if not os.path.isfile(candidate):
+            self.send_payload(HTTPStatus.NO_CONTENT, b"", "image/png")
             return
 
-        self.send_error(404, "Not Found")
+        self.send_file(candidate, default_mime="image/png")
+
+    def handle_novnc_static(self, relative_path: str) -> None:
+        novncroot = self.server.args.novncroot
+        target_file = os.path.join(novncroot, relative_path)
+
+        if not is_path_within(target_file, novncroot) or not os.path.isfile(target_file):
+            self.send_error(HTTPStatus.NOT_FOUND, "File not found")
+            return
+
+        self.send_file(target_file, default_mime="text/plain")
 
 
-if __name__ == "__main__":
+def main() -> None:
     default_webroot = os.path.dirname(os.path.abspath(__file__))
 
-    parser = argparse.ArgumentParser(description="vnc2ws-server: HTTP management server and REST API coordinator")
+    parser = argparse.ArgumentParser(description="vnc2ws-server: HTTP management server")
     parser.add_argument("listen", nargs="?", default="0.0.0.0:8081")
     parser.add_argument("--proxy-port", type=int, default=8080)
     parser.add_argument("--token-source", default="/srv/qemu/tokens.conf")
-    parser.add_argument("--webroot", default=default_webroot, help="Каталог с index.html и файлами интерфейса")
-    parser.add_argument("--novncroot", default="/usr/share/novnc/", help="Системный каталог noVNC")
+    parser.add_argument("--webroot", default=default_webroot)
+    parser.add_argument("--novncroot", default="/usr/share/novnc")
     args = parser.parse_args()
 
-    TOKENS_PATH = args.token_source
-    host, port_str = args.listen.rsplit(':', 1) if ":" in args.listen else ("0.0.0.0", args.listen)
-    addr = (host, int(port_str))
+    args.webroot = os.path.abspath(args.webroot)
+    args.novncroot = os.path.abspath(args.novncroot)
 
-    server = ThreadingHTTPServer(addr, VLabManagementHandler)
-    server.proxy_port = args.proxy_port
-    server.webroot = os.path.abspath(args.webroot)
-    server.novncroot = os.path.abspath(args.novncroot)
+    host, _, port_str = args.listen.rpartition(":")
+    addr = (host or "0.0.0.0", int(port_str))
 
-    logging.info(f"UI Server started on http://{host}:{port_str} (webroot: {server.webroot}, novncroot: {server.novncroot})")
+    server = ThreadingHTTPServer(addr, VMConsoleHandler)
+    server.args = args
+
+    logging.info("UI Server started on http://%s:%s", addr[0], addr[1])
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        pass
+        logging.info("Shutting down server...")
+        server.server_close()
+
+
+if __name__ == "__main__":
+    main()

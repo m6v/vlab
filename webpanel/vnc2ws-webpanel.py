@@ -1,138 +1,169 @@
 #!/usr/bin/env python3
-import os
-import sys
-import re
-import json
-import socket
-import logging
 import argparse
+import json
+import logging
 import mimetypes
+import os
+import re
+import socket
+import sys
+from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any, Dict, List, Tuple
+from urllib.parse import urlsplit
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s', datefmt='%Y/%m/%d %H:%M:%S')
+TOKEN_PATTERN = re.compile(r"^([a-zA-Z0-9_-]+):\s*([0-9.]+):(\d+)")
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-TEMPLATE_PATH = os.path.join(BASE_DIR, "panel.html")
-TOKEN_REGEXP = re.compile(r'^([a-zA-Z0-9_-]+):\s*([0-9.]+):(\d+)')
-TOKENS_PATH = ""
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y/%m/%d %H:%M:%S",
+)
 
-def load_raw_tokens():
-    """Читает конфигурационный файл с токенами и возвращает список структур ВМ"""
-    vms_list = []
-    if not os.path.exists(TOKENS_PATH) or not os.access(TOKENS_PATH, os.R_OK):
-        logging.error(f"Конфигурационный файл с токенами недоступен: {TOKENS_PATH}")
-        return vms_list
+
+def load_raw_tokens(tokens_path: str) -> List[Dict[str, Any]]:
+    """Читает файл с токенами и возвращает список словарей с параметрами ВМ."""
+    vms: List[Dict[str, Any]] = []
     try:
-        with open(TOKENS_PATH, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith('#'): continue
-                match = TOKEN_REGEXP.match(line)
+        with open(tokens_path, "r", encoding="utf-8") as f:
+            for raw_line in f:
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                match = TOKEN_PATTERN.match(line)
                 if match:
-                    vms_list.append({
+                    vms.append({
                         "token": match.group(1),
                         "ip": match.group(2),
-                        "port": int(match.group(3))
+                        "port": int(match.group(3)),
                     })
-    except Exception as e:
-        logging.error(f"Ошибка при чтении конфигурационного файла с токенами: {e}")
-    return vms_list
+    except OSError as exc:
+        logging.error("Не удалось прочитать файл токенов %s: %s", tokens_path, exc)
+    return vms
 
-class InstructorScannerHandler(BaseHTTPRequestHandler):
-    def log_message(self, format, *args):
-        logging.debug(format % args)
 
-    def do_GET(self):
-        # Унифицированное пуленепробиваемое разделение путей через partition
-        path, _, _ = self.path.partition('?')
-        webroot = self.server.webroot
+def is_port_open(host: str, port: int, timeout: float = 0.05) -> bool:
+    """Проверяет доступность TCP-порта VNC."""
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
 
-        # REST API: Передача конфигурации служебных портов и списка виртуальных машин
-        if path == '/api/tokens':
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.end_headers()
 
-            api_response = {
-                "config": {
-                    "pythonPort": self.server.server_port,
-                    "proxyPort": self.server.proxy_port
-                },
-                "vms": load_raw_tokens()
-            }
-            self.wfile.write(json.dumps(api_response).encode('utf-8'))
+def is_path_within(target_path: str, base_dir: str) -> bool:
+    """Защита от выхода за пределы каталога (Path Traversal)."""
+    real_base = os.path.realpath(base_dir)
+    real_target = os.path.realpath(target_path)
+    return os.path.commonpath([real_base, real_target]) == real_base
+
+
+class WebPanelHandler(BaseHTTPRequestHandler):
+    """Обработчик HTTP-запросов обзорной панели управления ВМ."""
+
+    def log_message(self, format: str, *args) -> None:
+        logging.debug(format, *args)
+
+    def send_payload(self, status: HTTPStatus, body: bytes, content_type: str) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def send_json(self, data: Any, status: HTTPStatus = HTTPStatus.OK) -> None:
+        body = json.dumps(data).encode("utf-8")
+        self.send_payload(status, body, "application/json; charset=utf-8")
+
+    def send_safe_static(self, base_dir: str, relative_path: str, default_mime: str = "application/octet-stream") -> None:
+        """Безопасная отдача статического файла из указанного каталога."""
+        clean_rel = relative_path.lstrip("/")
+        target_file = os.path.join(base_dir, clean_rel)
+
+        if not is_path_within(target_file, base_dir) or not os.path.isfile(target_file):
+            self.send_error(HTTPStatus.NOT_FOUND, "File not found")
             return
 
-        # REST API: Сканирование статусов виртуальных машин с поддержкой составных ключей для защиты от дубликатов имен
-        if path == '/api/ping':
-            vms = load_raw_tokens()
-            results = {}
-            for vm in vms:
-                state_key = f"{vm['ip']}:{vm['token']}"
-                try:
-                    with socket.create_connection((vm["ip"], vm["port"]), timeout=0.05):
-                        results[state_key] = True
-                        continue
-                except Exception: pass
-                results[state_key] = False
-
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps(results).encode('utf-8'))
+        try:
+            with open(target_file, "rb") as f:
+                data = f.read()
+        except OSError:
+            self.send_error(HTTPStatus.NOT_FOUND, "File not found")
             return
 
-        # UI Статика: Раздача системных файлов noVNC
-        if path.startswith("/novnc/"):
-            relative_path = path.replace("/novnc/", "", 1)
-            file_path = os.path.normpath(os.path.join(webroot, relative_path))
-            if not file_path.startswith(os.path.normpath(webroot)) or not os.path.exists(file_path) or os.path.isdir(file_path):
-                self.send_error(404, "File not found")
-                return
-            content_type, _ = mimetypes.guess_type(file_path)
-            self.send_response(200)
-            self.send_header("Content-Type", content_type or "text/plain")
-            self.end_headers()
-            with open(file_path, 'rb') as f:
-                self.wfile.write(f.read())
-            return
+        mime_type, _ = mimetypes.guess_type(target_file)
+        self.send_payload(HTTPStatus.OK, data, mime_type or default_mime)
 
-        # UI Статика: Раздача главной страницы
-        if path == "/" or path == "/panel.html":
-            if not os.path.exists(TEMPLATE_PATH):
-                self.send_error(404, "UI Template missing")
-                return
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.end_headers()
-            with open(TEMPLATE_PATH, 'rb') as f:
-                self.wfile.write(f.read())
-            return
+    def do_GET(self) -> None:
+        route = urlsplit(self.path).path
 
-        self.send_error(404, "Not Found")
+        if route == "/" or route == "/panel.html":
+            self.send_safe_static(self.server.args.webroot, "panel.html", "text/html; charset=utf-8")
+        elif route == "/api/tokens":
+            self.handle_tokens()
+        elif route == "/api/ping":
+            self.handle_ping()
+        elif route.startswith("/novnc/"):
+            rel_path = route[len("/novnc/"):]
+            self.send_safe_static(self.server.args.novncroot, rel_path, "text/plain")
+        else:
+            # Раздача дополнительных локальных файлов из webroot (например, virt-manager.png или viewer.html)
+            self.send_safe_static(self.server.args.webroot, route)
 
-if __name__ == "__main__":
+    def handle_tokens(self) -> None:
+        args = self.server.args
+        response = {
+            "config": {
+                "pythonPort": args.port,
+                "proxyPort": args.wport,
+            },
+            "vms": load_raw_tokens(args.token_source),
+        }
+        self.send_json(response)
+
+    def handle_ping(self) -> None:
+        vms = load_raw_tokens(self.server.args.token_source)
+        results = {
+            f"{vm['ip']}:{vm['token']}": is_port_open(vm["ip"], vm["port"])
+            for vm in vms
+        }
+        self.send_json(results)
+
+
+def main() -> None:
+    default_webroot = os.path.dirname(os.path.abspath(__file__))
+
     parser = argparse.ArgumentParser(
-        description="vnc2ws-instructor: Enterprise static control panel and state monitoring scanner."
+        description="vnc2ws-webpanel: Control panel and state monitoring scanner."
     )
-    parser.add_argument("-p", "--port", type=int, default=8000, help="Порт веб-интерфейса Панели (default: 8000)")
-    parser.add_argument("-w", "--wport", type=int, default=8080, help="Порт работающего WebSocket-шлюза проекта (default: 8080)")
-    parser.add_argument("--token-source", default="/srv/qemu/tokens.conf", help="Путь к оригинальному файлу tokens.conf")
-    parser.add_argument("--webroot", default="/usr/share/novnc/", help="Путь к системной директории noVNC")
+    parser.add_argument("-b", "--bind", default="0.0.0.0", help="IP-адрес прослушивания (default: 0.0.0.0)")
+    parser.add_argument("-p", "--port", type=int, default=8000, help="Порт веб-интерфейса панели (default: 8000)")
+    parser.add_argument("-w", "--wport", "--proxy-port", dest="wport", type=int, default=8080, help="Порт WebSocket-прокси (default: 8080)")
+    parser.add_argument("--token-source", default="/srv/qemu/tokens.conf", help="Путь к файлу tokens.conf")
+    parser.add_argument("--webroot", default=default_webroot, help="Каталог с panel.html и иконками")
+    parser.add_argument("--novncroot", default="/usr/share/novnc", help="Системный каталог noVNC")
     args = parser.parse_args()
 
-    TOKENS_PATH = args.token_source
+    args.webroot = os.path.abspath(args.webroot)
+    args.novncroot = os.path.abspath(args.novncroot)
 
-    if not os.path.exists(args.webroot) or not os.path.exists(TEMPLATE_PATH):
-        logging.fatal("[FATAL] Критические системные ресурсы (webroot или panel.html) отсутствуют!")
+    panel_file = os.path.join(args.webroot, "panel.html")
+    if not os.path.isdir(args.novncroot) or not os.path.isfile(panel_file):
+        logging.fatal("[FATAL] Критические ресурсы (novncroot или panel.html) не найдены!")
         sys.exit(1)
 
-    server = ThreadingHTTPServer(("0.0.0.0", args.port), InstructorScannerHandler)
-    server.server_port = args.port
-    server.proxy_port = args.wport
-    server.webroot = os.path.abspath(args.webroot)
+    addr: Tuple[str, int] = (args.bind, args.port)
+    server = ThreadingHTTPServer(addr, WebPanelHandler)
+    server.args = args
 
-    logging.info(f"Панель инструктора успешно запущена на http://0.0.0.0:{args.port}")
-    try: server.serve_forever()
-    except KeyboardInterrupt: pass
+    logging.info("Веб-панель запущена на http://%s:%s (webroot: %s)", args.bind, args.port, args.webroot)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        logging.info("Остановка сервера...")
+        server.server_close()
+
+
+if __name__ == "__main__":
+    main()
