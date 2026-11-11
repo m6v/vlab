@@ -28,7 +28,7 @@ TOKENS_PATH = ""
 
 def get_vnc_address(vm_name):
     """
-    Ищет сетевой адрес VNC-бэкенда в файле tokens.conf по точному имени ВМ.
+    Ищет сетевой адрес VNC-бэкенда в файле tokens.conf по имени ВМ.
     Args:
         vm_name (str): Уникальное имя запрашиваемой виртуальной машины.
 
@@ -101,7 +101,7 @@ class VLabManagementHandler(BaseHTTPRequestHandler):
             logging.info(f"API: Запуск виртуальной машины '{vm_name}'")
             subprocess.Popen(["/usr/local/bin/vmctrl", "start", vm_name],
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEBNULL,
+                stderr=subprocess.DEVNULL,
                 start_new_session=True
             )
             self.send_simple_response(200, b"OK", "text/plain")
