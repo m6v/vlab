@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import os
-import sys
 import re
 import socket
 import logging
@@ -10,21 +9,21 @@ import mimetypes
 from urllib.parse import parse_qs
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-# HTML-шаблон интерфейса панели управления
-TEMPLATE_PATH = "index.html"
-
 # Регулярное выражение для предотвращения атак типа Command Injection через имя ВМ
 VM_NAME_SAFE_REGEXP = re.compile(r'^[a-zA-Z0-9_-]+$')
 
 # Шаблон парсинга строк tokens.conf: Имя_ВМ:Локальный_IP:Порт_VNC
 TOKEN_REGEXP = re.compile(r'^([a-zA-Z0-9_-]+):\s*([0-9.]+):(\d+)')
 
-LOG_FILE = "/srv/qemu/vmctrl.log"
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s', datefmt='%Y/%m/%d %H:%M:%S')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%Y/%m/%d %H:%M:%S'
+)
 
 # Глобальная переменная для пути к конфигурации токенов (инициализируется в __main__)
 TOKENS_PATH = ""
+
 
 def get_vnc_address(vm_name):
     """
@@ -41,11 +40,13 @@ def get_vnc_address(vm_name):
     with open(TOKENS_PATH, 'r', encoding='utf-8') as f:
         for line in f:
             line = line.strip()
-            if not line or line.startswith('#'): continue
+            if not line or line.startswith('#'):
+                continue
             match = TOKEN_REGEXP.match(line)
             if match and match.group(1) == vm_name:
                 return match.group(2), int(match.group(3))
     return None
+
 
 def is_vm_running(vnc_addr_tuple):
     """
@@ -55,7 +56,8 @@ def is_vm_running(vnc_addr_tuple):
     Returns:
         bool: True, если порт открыт и отвечает (RUNNING), иначе False (STOPPED).
     """
-    if not vnc_addr_tuple: return False
+    if not vnc_addr_tuple:
+        return False
     try:
         host, port = vnc_addr_tuple
         # Таймаут 0.5 сек предотвращает блокирование ресурсов
@@ -64,6 +66,7 @@ def is_vm_running(vnc_addr_tuple):
             return True
     except Exception:
         return False
+
 
 class VLabManagementHandler(BaseHTTPRequestHandler):
     """Обработчик входящих HTTP REST API и статических UI запросов веб-панели."""
@@ -89,7 +92,6 @@ class VLabManagementHandler(BaseHTTPRequestHandler):
         path, _, query_str = self.path.partition('?')
         params = parse_qs(query_str)
         vm_name = params.get("vm", [""])[0].strip()
-        webroot = self.server.webroot
 
         # Проверка имени для защиты от инъекций в bash утилиты vmctrl
         if vm_name and not VM_NAME_SAFE_REGEXP.match(vm_name):
@@ -99,7 +101,8 @@ class VLabManagementHandler(BaseHTTPRequestHandler):
         # Маршрут API: Асинхронный запуск виртуальной машины
         if path == "/start" and vm_name:
             logging.info(f"API: Запуск виртуальной машины '{vm_name}'")
-            subprocess.Popen(["/usr/local/bin/vmctrl", "start", vm_name],
+            subprocess.Popen(
+                ["/usr/local/bin/vmctrl", "start", vm_name],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 start_new_session=True
@@ -128,13 +131,18 @@ class VLabManagementHandler(BaseHTTPRequestHandler):
                 self.send_simple_response(200, f.read(), "image/png")
             return
 
-        # Маршрут UI: Раздача статических ресурсов noVNC из системы
+        # Маршрут UI: Раздача статических ресурсов noVNC из системного каталога
         if path.startswith("/novnc/"):
+            novncroot = self.server.novncroot
             relative_path = path.replace("/novnc/", "", 1)
-            file_path = os.path.normpath(os.path.join(webroot, relative_path))
+            file_path = os.path.normpath(os.path.join(novncroot, relative_path))
 
             # Проверка Path Traversal исключает чтение системных файлов через '../../'
-            if not file_path.startswith(os.path.normpath(webroot)) or not os.path.exists(file_path) or os.path.isdir(file_path):
+            if (
+                not file_path.startswith(novncroot + os.sep)
+                or not os.path.exists(file_path)
+                or os.path.isdir(file_path)
+            ):
                 self.send_error(404, "File not found")
                 return
 
@@ -143,7 +151,7 @@ class VLabManagementHandler(BaseHTTPRequestHandler):
                 self.send_simple_response(200, f.read(), content_type or "text/plain")
             return
 
-        # Маршрут UI: Рендеринг главной страницы консоли
+        # Маршрут UI: Рендеринг главной страницы консоли из каталога webroot
         if path == "/":
             if not vm_name:
                 self.send_error(400, "Parameter 'vm' is required")
@@ -151,23 +159,33 @@ class VLabManagementHandler(BaseHTTPRequestHandler):
             if not get_vnc_address(vm_name):
                 self.send_error(404, f"Not Found: VM '{vm_name}' not registered in {TOKENS_PATH}")
                 return
-            if not os.path.exists(TEMPLATE_PATH):
-                self.send_error(500, "Internal Server Error: UI Template missing")
+
+            template_path = os.path.join(self.server.webroot, "index.html")
+            if not os.path.exists(template_path):
+                self.send_error(500, f"Internal Server Error: UI Template missing at {template_path}")
                 return
-            with open(TEMPLATE_PATH, 'r', encoding='utf-8') as f:
-                # Внедрение параметров текущей сессии в разметку страницы
-                html = f.read().replace("{{.VMName}}", vm_name).replace("{{.ProxyPort}}", str(self.server.proxy_port))
+
+            with open(template_path, 'r', encoding='utf-8') as f:
+                html = (
+                    f.read()
+                    .replace("{{.VMName}}", vm_name)
+                    .replace("{{.ProxyPort}}", str(self.server.proxy_port))
+                )
             self.send_simple_response(200, html.encode('utf-8'), "text/html; charset=utf-8")
             return
 
         self.send_error(404, "Not Found")
 
+
 if __name__ == "__main__":
+    default_webroot = os.path.dirname(os.path.abspath(__file__))
+
     parser = argparse.ArgumentParser(description="vnc2ws-server: HTTP management server and REST API coordinator")
     parser.add_argument("listen", nargs="?", default="0.0.0.0:8081")
     parser.add_argument("--proxy-port", type=int, default=8080)
     parser.add_argument("--token-source", default="/srv/qemu/tokens.conf")
-    parser.add_argument("--webroot", default="/usr/share/novnc/")
+    parser.add_argument("--webroot", default=default_webroot, help="Каталог с index.html и файлами интерфейса")
+    parser.add_argument("--novncroot", default="/usr/share/novnc/", help="Системный каталог noVNC")
     args = parser.parse_args()
 
     TOKENS_PATH = args.token_source
@@ -177,6 +195,10 @@ if __name__ == "__main__":
     server = ThreadingHTTPServer(addr, VLabManagementHandler)
     server.proxy_port = args.proxy_port
     server.webroot = os.path.abspath(args.webroot)
-    logging.info(f"UI Server started on http://{host}:{port_str}")
-    try: server.serve_forever()
-    except KeyboardInterrupt: pass
+    server.novncroot = os.path.abspath(args.novncroot)
+
+    logging.info(f"UI Server started on http://{host}:{port_str} (webroot: {server.webroot}, novncroot: {server.novncroot})")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass

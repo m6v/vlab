@@ -5,7 +5,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/srv/qemu
-ExecStart=/srv/qemu/vnc2ws-server.py 0.0.0.0:8081 --proxy-port=8080 --token-source=/srv/qemu/tokens.conf --webroot=/usr/share/novnc/
+ExecStart=/srv/qemu/vnc2ws-server.py 0.0.0.0:8081 --proxy-port=8080 --token-source=/srv/qemu/tokens.conf --novncroot=/usr/share/novnc/
 KillMode=process
 Restart=always
 RestartSec=5
