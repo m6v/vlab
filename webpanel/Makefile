@@ -26,7 +26,7 @@ deb:
 	@chmod 755 $(BUILD_PATH)/DEBIAN/prerm
 
 	@mkdir -p $(BUILD_PATH)$(TARGET_PATH)
-	@cp -a panel.html vnc2ws-webpanel.py $(BUILD_PATH)$(TARGET_PATH)
+	@cp -a panel.html viewer.html vnc2ws-webpanel.py $(BUILD_PATH)$(TARGET_PATH)
 	@mkdir -p $(BUILD_PATH)$(PIXMAPS_PATH)
 	@cp -a virt-manager.png $(BUILD_PATH)$(PIXMAPS_PATH)
 
