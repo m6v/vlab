@@ -7,6 +7,7 @@ import mimetypes
 import os
 import re
 import socket
+import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from http import HTTPStatus
@@ -17,6 +18,8 @@ from urllib.parse import parse_qs, urlsplit
 
 VM_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 TOKEN_PATTERN = re.compile(r"^([a-zA-Z0-9_-]+):\s*([0-9.]+):(\d+)")
+
+VMCTRL_BIN = "/usr/local/bin/vmctrl"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -71,7 +74,7 @@ def is_path_within(target_path: str, base_dir: str) -> bool:
 
 
 class WebPanelHandler(BaseHTTPRequestHandler):
-    """Обработчик HTTP-запросов обзорной панели управления ВМ (режим инструктора)."""
+    """Обработчик HTTP-запросов обзорной панели управления ВМ."""
 
     def log_message(self, format: str, *args) -> None:
         logging.debug(format, *args)
@@ -111,7 +114,8 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         parsed_url = urlsplit(self.path)
         route = parsed_url.path
         params = parse_qs(parsed_url.query)
-        vm_name = params.get("vm", [""])[0].strip()
+        vm_list = params.get("vm")
+        vm_name = vm_list.pop(0).strip() if vm_list else ""
 
         if vm_name and not VM_NAME_PATTERN.match(vm_name):
             self.send_error(HTTPStatus.BAD_REQUEST, "Invalid VM name format")
@@ -123,6 +127,8 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             self.handle_console(vm_name)
         elif route == "/status":
             self.handle_status(vm_name)
+        elif route == "/start":
+            self.handle_start(vm_name)
         elif route == "/api/tokens":
             self.handle_tokens()
         elif route == "/api/ping":
@@ -134,7 +140,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             self.send_safe_static(self.server.args.webroot, route)
 
     def handle_console(self, vm_name: str) -> None:
-        """Отдает общий шаблон console.html из пакета vnc2ws-console в режиме наблюдения."""
+        """Отдает общий шаблон console.html из пакета vnc2ws-console."""
         if not vm_name:
             self.send_error(HTTPStatus.BAD_REQUEST, "Parameter 'vm' is required")
             return
@@ -156,15 +162,38 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         rendered = Template(raw_html).safe_substitute(
             vm_name=html.escape(vm_name),
             proxy_port=args.wport,
-            allow_start="false",
         )
         self.send_payload(HTTPStatus.OK, rendered.encode("utf-8"), "text/html; charset=utf-8")
 
     def handle_status(self, vm_name: str) -> None:
         """Точечная проверка статуса одной ВМ (используется внутри console.html)."""
         target = resolve_vnc_target(self.server.args.token_source, vm_name) if vm_name else None
-        status = b"RUNNING" if (target and is_port_open(target[0], target[1], timeout=0.2)) else b"STOPPED"
+        if target:
+            host, port = target
+            is_up = is_port_open(host, port, timeout=0.2)
+        else:
+            is_up = False
+        status = b"RUNNING" if is_up else b"STOPPED"
         self.send_payload(HTTPStatus.OK, status, "text/plain; charset=utf-8")
+
+    def handle_start(self, vm_name: str) -> None:
+        """Запуск виртуальной машины по команде с панели инструктора."""
+        if not vm_name:
+            self.send_error(HTTPStatus.BAD_REQUEST, "Parameter 'vm' is required")
+            return
+
+        if not resolve_vnc_target(self.server.args.token_source, vm_name):
+            self.send_error(HTTPStatus.NOT_FOUND, f"VM '{vm_name}' not registered")
+            return
+
+        logging.info("API (Инструктор): Запуск виртуальной машины '%s'", vm_name)
+        subprocess.Popen(
+            [VMCTRL_BIN, "start", vm_name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        self.send_payload(HTTPStatus.OK, b"OK", "text/plain; charset=utf-8")
 
     def handle_tokens(self) -> None:
         args = self.server.args
@@ -195,8 +224,6 @@ class WebPanelHandler(BaseHTTPRequestHandler):
 
 def main() -> None:
     default_webroot = os.path.dirname(os.path.abspath(__file__))
-    # По умолчанию ищем console.html в системном каталоге пакета vnc2ws-console,
-    # а при локальном запуске — рядом со скриптом
     system_console_dir = "/usr/share/vnc2ws"
     default_console_dir = system_console_dir if os.path.isfile(os.path.join(system_console_dir, "console.html")) else default_webroot
 
@@ -211,7 +238,6 @@ def main() -> None:
     parser.add_argument("--consoledir", default=default_console_dir, help="Каталог с шаблоном console.html из пакета vnc2ws-console")
     parser.add_argument("--novncroot", default="/usr/share/novnc", help="Системный каталог noVNC")
     args = parser.parse_args()
-
     args.webroot = os.path.abspath(args.webroot)
     args.consoledir = os.path.abspath(args.consoledir)
     args.novncroot = os.path.abspath(args.novncroot)

@@ -14,7 +14,7 @@ install:
 	@echo "Копирование исполняемых скриптов и верстки в $(TARGET_PATH)..."
 	install -m 0755 $(BRIDGE_NAME).py $(TARGET_PATH)/$(BRIDGE_NAME).py
 	install -m 0755 $(SERVER_NAME).py $(TARGET_PATH)/$(SERVER_NAME).py
-	install -m 0644 index.html $(TARGET_PATH)/index.html
+	install -m 0644 console.html $(TARGET_PATH)
 	@if [ -f tokens.default ]; then install -m 0644 tokens.default $(TARGET_PATH)/tokens.default; fi
 	@echo "Локальная установка в $(TARGET_PATH) завершена."
 
@@ -47,7 +47,7 @@ deb:
 	chmod +x $(BUILD_PATH)$(TARGET_PATH)/$(SERVER_NAME).py
 	
 	# Перенос верстки и файлов конфигурации в /srv/qemu
-	cp index.html $(BUILD_PATH)$(TARGET_PATH)/
+	cp console.html $(BUILD_PATH)$(TARGET_PATH)/
 	@if [ -f tokens.default ]; then cp tokens.default $(BUILD_PATH)$(TARGET_PATH)/; fi
 
 	# Перенос конфигураций юнитов systemd

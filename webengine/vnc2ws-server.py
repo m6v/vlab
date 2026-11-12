@@ -130,7 +130,6 @@ class VMConsoleHandler(BaseHTTPRequestHandler):
         rendered = Template(raw_html).safe_substitute(
             vm_name=html.escape(vm_name),
             proxy_port=args.proxy_port,
-            allow_start="true",
         )
         self.send_payload(HTTPStatus.OK, rendered.encode("utf-8"), "text/html; charset=utf-8")
 
