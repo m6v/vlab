@@ -79,13 +79,18 @@ class WebPanelHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args) -> None:
         logging.debug(format, *args)
 
-    def send_payload(self, status: HTTPStatus, body: bytes, content_type: str) -> None:
-        self.send_response(status)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.end_headers()
-        self.wfile.write(body)
+    def send_payload(self, status: HTTPStatus, body: bytes, content_type: str, no_cache: bool = False) -> None:
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            if no_cache:
+                self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def send_json(self, data: Any, status: HTTPStatus = HTTPStatus.OK) -> None:
         body = json.dumps(data).encode("utf-8")

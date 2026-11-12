@@ -99,6 +99,7 @@
             proxyPort: "${proxy_port}",
             rfb: null,
             pollTimer: null,
+            isConnecting: false,
 
             init() {
                 this.setupFavicon();
@@ -125,7 +126,9 @@
 
             async isRunning() {
                 try {
-                    const res = await fetch(`/status?vm=${encodeURIComponent(this.vmName)}`);
+                    const res = await fetch(`/status?vm=${encodeURIComponent(this.vmName)}`, {
+                        cache: 'no-store'
+                    });
                     return res.ok && (await res.text()).trim() === 'RUNNING';
                 } catch {
                     return false;
@@ -137,7 +140,6 @@
                     this.connectVNC();
                 } else {
                     this.showOffline();
-                    // Фоновый опрос на случай, если машину запустят извне
                     this.startPolling(2500);
                 }
             },
@@ -160,24 +162,38 @@
             },
 
             connectVNC() {
+                if (this.isConnecting) return;
+                this.isConnecting = true;
+
+                if (this.rfb) {
+                    try { this.rfb.disconnect(); } catch {}
+                    this.rfb = null;
+                }
+
+                const container = document.getElementById('noVNC_container');
+                container.textContent = '';
+
                 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
                 const wsUrl = `${protocol}//${window.location.hostname}:${this.proxyPort}/ws?token=${encodeURIComponent(this.vmName)}`;
 
-                this.rfb = new RFB(document.getElementById('noVNC_container'), wsUrl, {
+                const client = new RFB(container, wsUrl, {
                     wsProtocols: ['binary'],
                     focusOnClick: true,
                     pingInterval: 10
                 });
 
-                this.rfb.scaleViewport = true;
+                client.scaleViewport = true;
 
-                this.rfb.addEventListener('connect', () => {
+                client.addEventListener('connect', () => {
+                    this.isConnecting = false;
+                    this.rfb = client;
                     this.stopPolling();
                     this.showOnline();
                     setTimeout(() => this.rfb && this.rfb.focus(), 150);
                 });
 
-                this.rfb.addEventListener('disconnect', () => {
+                client.addEventListener('disconnect', () => {
+                    this.isConnecting = false;
                     this.rfb = null;
                     this.showOffline();
                     this.startPolling(1500);
@@ -190,11 +206,9 @@
 
                 btn.classList.add('disabled');
                 document.getElementById('startBtnText').innerText = 'Запуск...';
-                
-                // Ускоряем поллинг после нажатия кнопки
                 this.stopPolling();
 
-                fetch(`/start?vm=${encodeURIComponent(this.vmName)}`)
+                fetch(`/start?vm=${encodeURIComponent(this.vmName)}`, { cache: 'no-store' })
                     .then(res => {
                         if (res.ok) {
                             this.startPolling(500);
