@@ -64,7 +64,7 @@ async def ws_handler(websocket, path=None):
         # Разделение пути по символу '?'
         _, _, fwd_query = forwarded_uri.partition('?')
         fwd_list = parse_qs(fwd_query).get('token', [""])
-        token = fwd_list.strip() if fwd_list and fwd_list else None
+        token = fwd_list[0].strip() if fwd_list and fwd_list[0] else None
         
         # Аварийное закрытие сокета, если даже в заголовках прокси токен отсутствует 
         if not token:
