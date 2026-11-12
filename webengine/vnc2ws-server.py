@@ -42,8 +42,8 @@ def resolve_vnc_target(tokens_path: str, vm_name: str) -> Optional[Tuple[str, in
     return None
 
 
-def is_port_open(target: Optional[Tuple[str, int]], timeout: float = 0.5) -> bool:
-    """Проверяет доступность локального VNC-порта."""
+def is_port_open(target: Optional[Tuple[str, int]], timeout: float = 0.2) -> bool:
+    """Проверяет доступность TCP-порта VNC."""
     if not target:
         return False
     try:
@@ -61,7 +61,7 @@ def is_path_within(target_path: str, base_dir: str) -> bool:
 
 
 class VMConsoleHandler(BaseHTTPRequestHandler):
-    """Обработчик HTTP-запросов веб-консоли виртуальной машины."""
+    """Обработчик HTTP-запросов веб-консоли виртуальной машины (режим обучаемого)."""
 
     def log_message(self, format: str, *args) -> None:
         logging.debug(format, *args)
@@ -95,8 +95,8 @@ class VMConsoleHandler(BaseHTTPRequestHandler):
             self.send_error(HTTPStatus.BAD_REQUEST, "Invalid VM name format")
             return
 
-        if route == "/":
-            self.handle_index(vm_name)
+        if route in ("/", "/console", "/console.html"):
+            self.handle_console(vm_name)
         elif route == "/status":
             self.handle_status(vm_name)
         elif route == "/start":
@@ -108,7 +108,7 @@ class VMConsoleHandler(BaseHTTPRequestHandler):
         else:
             self.send_error(HTTPStatus.NOT_FOUND, "Not Found")
 
-    def handle_index(self, vm_name: str) -> None:
+    def handle_console(self, vm_name: str) -> None:
         if not vm_name:
             self.send_error(HTTPStatus.BAD_REQUEST, "Parameter 'vm' is required")
             return
@@ -118,7 +118,7 @@ class VMConsoleHandler(BaseHTTPRequestHandler):
             self.send_error(HTTPStatus.NOT_FOUND, f"VM '{vm_name}' not registered")
             return
 
-        template_file = os.path.join(args.webroot, "index.html")
+        template_file = os.path.join(args.webroot, "console.html")
         try:
             with open(template_file, "r", encoding="utf-8") as f:
                 raw_html = f.read()
@@ -130,6 +130,7 @@ class VMConsoleHandler(BaseHTTPRequestHandler):
         rendered = Template(raw_html).safe_substitute(
             vm_name=html.escape(vm_name),
             proxy_port=args.proxy_port,
+            allow_start="true",
         )
         self.send_payload(HTTPStatus.OK, rendered.encode("utf-8"), "text/html; charset=utf-8")
 
@@ -179,7 +180,7 @@ class VMConsoleHandler(BaseHTTPRequestHandler):
 def main() -> None:
     default_webroot = os.path.dirname(os.path.abspath(__file__))
 
-    parser = argparse.ArgumentParser(description="vnc2ws-server: HTTP management server")
+    parser = argparse.ArgumentParser(description="vnc2ws-server: Student VM console server")
     parser.add_argument("listen", nargs="?", default="0.0.0.0:8081")
     parser.add_argument("--proxy-port", type=int, default=8080)
     parser.add_argument("--token-source", default="/srv/qemu/tokens.conf")
@@ -196,7 +197,7 @@ def main() -> None:
     server = ThreadingHTTPServer(addr, VMConsoleHandler)
     server.args = args
 
-    logging.info("UI Server started on http://%s:%s", addr[0], addr[1])
+    logging.info("Student Console Server started on http://%s:%s", addr[0], addr[1])
     try:
         server.serve_forever()
     except KeyboardInterrupt:

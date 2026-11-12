@@ -291,11 +291,11 @@
                             iframe.style.display = 'block';
 
                             const params = new URLSearchParams({
-                                token: vm.token,
-                                port: String(this.serverConfig.proxyPort)
+                                vm: vm.token
                             });
-                            iframe.src = `/viewer.html?${params.toString()}`;
+                            iframe.src = `/console?${params.toString()}`;
                         });
+
                         vmSublist.appendChild(vmLi);
                     });
 
