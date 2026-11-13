@@ -1,4 +1,5 @@
-UNIT_NAME = vlab-webpanel
+SERVER_NAME = vnc2ws-server
+PANEL_NAME = vnc2ws-webpanel
 TARGET_PATH = /srv/qemu
 SYSTEMD_PATH = /etc/systemd/system
 PIXMAPS_PATH = /usr/share/pixmaps
@@ -26,12 +27,12 @@ deb:
 	@chmod 755 $(BUILD_PATH)/DEBIAN/prerm
 
 	@mkdir -p $(BUILD_PATH)$(TARGET_PATH)
-	@cp -a panel.html vnc2ws-webpanel.py $(BUILD_PATH)$(TARGET_PATH)
+	@cp -a console.html panel.html $(SERVER_NAME).py $(PANEL_NAME).py $(BUILD_PATH)$(TARGET_PATH)
 	@mkdir -p $(BUILD_PATH)$(PIXMAPS_PATH)
 	@cp -a virt-manager.png $(BUILD_PATH)$(PIXMAPS_PATH)
 
 	@mkdir -p $(BUILD_PATH)$(SYSTEMD_PATH)
-	@cp $(UNIT_NAME).service $(BUILD_PATH)$(SYSTEMD_PATH)
+	@cp $(SERVER_NAME).service $(PANEL_NAME).service $(BUILD_PATH)$(SYSTEMD_PATH)
 
 	@echo "Сборка deb-пакета..."
 	@dpkg-deb --build --root-owner-group $(BUILD_PATH) $(PKG_NAME)_$(PKG_VER)_$(PKG_ARCH).deb

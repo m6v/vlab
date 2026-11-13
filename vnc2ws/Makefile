@@ -1,4 +1,3 @@
-SERVER_NAME = vnc2ws-server
 BRIDGE_NAME = vnc2ws-bridge
 SYSTEMD_PATH = /etc/systemd/system
 TARGET_PATH = /srv/qemu
@@ -13,15 +12,13 @@ install:
 	mkdir -p $(TARGET_PATH)
 	@echo "Копирование исполняемых скриптов и верстки в $(TARGET_PATH)..."
 	install -m 0755 $(BRIDGE_NAME).py $(TARGET_PATH)/$(BRIDGE_NAME).py
-	install -m 0755 $(SERVER_NAME).py $(TARGET_PATH)/$(SERVER_NAME).py
-	install -m 0644 console.html $(TARGET_PATH)
 	@if [ -f tokens.default ]; then install -m 0644 tokens.default $(TARGET_PATH)/tokens.default; fi
 	@echo "Локальная установка в $(TARGET_PATH) завершена."
 
 # Удаление исполняемых файлов из системы (требует sudo)
 uninstall:
 	@echo "Удаление файлов из $(TARGET_PATH)..."
-	rm -f $(TARGET_PATH)/$(BRIDGE_NAME).py $(TARGET_PATH)/$(SERVER_NAME).py $(TARGET_PATH)/index.html $(TARGET_PATH)/tokens.default
+	rm -f $(TARGET_PATH)/$(BRIDGE_NAME).py $(TARGET_PATH)/index.html $(TARGET_PATH)/tokens.default
 	@echo "Компоненты удалены."
 
 # Автоматическая сборка .deb пакета
@@ -42,17 +39,13 @@ deb:
 
 	# Перенос скриптов в /srv/qemu
 	cp $(BRIDGE_NAME).py $(BUILD_PATH)$(TARGET_PATH)/$(BRIDGE_NAME).py
-	cp $(SERVER_NAME).py $(BUILD_PATH)$(TARGET_PATH)/$(SERVER_NAME).py
 	chmod +x $(BUILD_PATH)$(TARGET_PATH)/$(BRIDGE_NAME).py
-	chmod +x $(BUILD_PATH)$(TARGET_PATH)/$(SERVER_NAME).py
 	
-	# Перенос верстки и файлов конфигурации в /srv/qemu
-	cp console.html $(BUILD_PATH)$(TARGET_PATH)/
+	# Перенос файла с токенами в в /srv/qemu
 	@if [ -f tokens.default ]; then cp tokens.default $(BUILD_PATH)$(TARGET_PATH)/; fi
 
 	# Перенос конфигураций юнитов systemd
 	@cp $(BRIDGE_NAME).service $(BUILD_PATH)$(SYSTEMD_PATH)
-	@cp $(SERVER_NAME).service $(BUILD_PATH)$(SYSTEMD_PATH)
 
 	# Подсчет дискового пространства Installed-Size в Кб
 	$(eval INSTALLED_SIZE := $(shell du -s --block-size=1024 $(BUILD_PATH) | cut -f1))

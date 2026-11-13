@@ -1,10 +1,14 @@
 #!/bin/sh
 set -e
+
+SERVER_NAME=vnc2ws-server
+PANEL_NAME=vnc2ws-webpanel
+
 case "$1" in
     purge|remove)
-        echo "Отключение служб..."
-        systemctl stop vnc2ws-bridge.service vnc2ws-server.service || true
-        systemctl disable vnc2ws-bridge.service vnc2ws-server.service || true
+        echo "Отключение службы $SERVER_NAME и $PANEL_NAME..."
+        systemctl stop $SERVER_NAME.service $PANEL_NAME.service
+        systemctl disable $SERVER_NAME.service $PANEL_NAME.service
         ;;
 
     upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)

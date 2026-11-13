@@ -1,12 +1,13 @@
 #!/bin/sh
 set -e
 
+BRIDGE_NAME=vnc2ws-bridge
+
 case "$1" in
     configure)
-        echo "Настройка службы vlab-webpanel..."
+        echo "Настройка служб веб-доступа к рабочим чтолам виртуальных машин ..."
         systemctl daemon-reload
-        systemctl enable vlab-webpanel.service
-        systemctl restart vlab-webpanel.service
+        systemctl enable --now $BRIDGE_NAME.service
         ;;
 
     abort-upgrade|abort-remove|abort-deconfigure)

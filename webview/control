@@ -1,0 +1,8 @@
+Package: vlab-webview
+Version: 1.3
+Section: utils
+Priority: optional
+Architecture: amd64
+Depends: python3, vlab-vnc2ws
+Maintainer: Sergey Maksimov <m6v@mail.ru>
+Description: Console and Instructor's web-panel for viewing learner's virtual machines iface

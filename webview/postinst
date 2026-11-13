@@ -1,12 +1,15 @@
 #!/bin/sh
 set -e
 
+SERVER_NAME=vnc2ws-server
+PANEL_NAME=vnc2ws-webpanel
+
 case "$1" in
     configure)
-        echo "Настройка служб веб-доступа к рабочим чтолам виртуальных машин ..."
+        echo "Настройка служб $SERVER_NAME и $PANEL_NAME..."
         systemctl daemon-reload
-        systemctl enable vnc2ws-bridge.service vnc2ws-server.service
-        systemctl restart vnc2ws-bridge.service vnc2ws-server.service
+        systemctl enable $SERVER_NAME.service $PANEL_NAME.service
+        systemctl restart $SERVER_NAME.service $PANEL_NAME.service
         ;;
 
     abort-upgrade|abort-remove|abort-deconfigure)
