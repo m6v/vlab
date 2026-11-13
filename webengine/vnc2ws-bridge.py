@@ -8,6 +8,7 @@ import sys
 from typing import Dict, Optional, Tuple
 from urllib.parse import parse_qs
 
+from websockets.exceptions import ConnectionClosed
 try:
     from websockets.asyncio.server import serve as ws_serve
     LEGACY_WS = False
@@ -32,6 +33,7 @@ def parse_endpoint(addr: str) -> Tuple[str, int]:
 def load_tokens(filepath: str) -> TokensMap:
     """Загружает и валидирует файл токенов."""
     tokens: TokensMap = {}
+    line_num = 0
     try:
         with open(filepath, "r", encoding="utf-8") as f:
             for line_num, raw_line in enumerate(f, 1):
@@ -99,17 +101,31 @@ async def ws_handler(websocket, path: Optional[str] = None, *, tokens_map: Token
         return
 
     async def pipeline_browser_to_vm():
-        async for message in websocket:
-            if isinstance(message, bytes) and message:
-                writer.write(message)
-                await writer.drain()
+        try:
+            async for message in websocket:
+                if isinstance(message, bytes):
+                    if message:
+                        writer.write(message)
+                        await writer.drain()
+                else:
+                    logging.debug("[%s] Игнорирование текстового сообщения от клиента", token)
+        except ConnectionClosed:
+            pass  # Штатное закрытие
+        except Exception as e:
+            logging.error("[%s] Ошибка при чтении из WebSocket: %s", token, e)
 
     async def pipeline_vm_to_browser():
-        while True:
-            data = await reader.read(65536)
-            if not data:
-                break
-            await asyncio.wait_for(websocket.send(data), timeout=10.0)
+        try:
+            while True:
+                data = await reader.read(65536)
+                if not data:
+                    break
+                await asyncio.wait_for(websocket.send(data), timeout=10.0)
+        except ConnectionClosed:
+            pass  # Штатное закрытие
+        except Exception as e:
+            # Если это не закрытие соединения, логируем как ошибку
+            logging.error("[%s] Ошибка при записи в WebSocket: %s", token, e)
 
     tasks = [
         asyncio.create_task(pipeline_browser_to_vm()),
@@ -155,7 +171,7 @@ async def main(listen_host: str, listen_port: int, tokens_map: TokensMap):
         subprotocols=["binary"],
         ping_interval=15,
         ping_timeout=10,
-        max_size=None,
+        max_size=5 * 1024 * 1024,
         reuse_address=True,
     ):
         logging.info("VNC-to-WebSocket Bridge запущен на %s:%s", listen_host, listen_port)
