@@ -7,10 +7,11 @@ import os
 import re
 import socket
 import subprocess
+import sys
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from string import Template
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 from urllib.parse import parse_qs, urlsplit
 
 VM_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
@@ -25,21 +26,43 @@ logging.basicConfig(
     datefmt="%Y/%m/%d %H:%M:%S",
 )
 
+TokensMap = Dict[str, Tuple[str, int]]
 
-def resolve_vnc_target(tokens_path: str, vm_name: str) -> Optional[Tuple[str, int]]:
-    """Ищет (IP, порт) ВМ в файле токенов."""
+
+def parse_endpoint(addr: str) -> Tuple[str, int]:
+    """Разбирает и валидирует адрес 'host:port' (IPv4 или DNS) через ОС."""
+    host, sep, port_str = addr.strip().rpartition(":")
+    port = int(port_str)
+    if not sep or not host or not (1 <= port <= 65535):
+        raise ValueError(f"invalid endpoint address '{addr}'")
+    socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
+    return host.strip(), port
+
+
+def load_tokens(filepath: str) -> TokensMap:
+    """Загружает и валидирует статический файл токенов при старте."""
+    tokens: TokensMap = {}
     try:
-        with open(tokens_path, "r", encoding="utf-8") as f:
-            for raw_line in f:
+        with open(filepath, "r", encoding="utf-8") as f:
+            for line_num, raw_line in enumerate(f, 1):
                 line = raw_line.strip()
                 if not line or line.startswith("#"):
                     continue
-                match = TOKEN_PATTERN.match(line)
-                if match and match.group(1) == vm_name:
-                    return match.group(2), int(match.group(3))
-    except OSError as exc:
-        logging.error("Не удалось прочитать %s: %s", tokens_path, exc)
-    return None
+
+                token_part, sep, target_part = line.partition(":")
+                token = token_part.strip()
+
+                if not sep or not token or token in tokens:
+                    raise ValueError("invalid token")
+
+                tokens[token] = parse_endpoint(target_part)
+    except Exception as e:
+        line_info = f" (string {line_num})" if "line_num" in locals() else ""
+        logging.critical("Failed to load %s%s: %s", filepath, line_info, e)
+        sys.exit(1)
+
+    logging.info("Loaded tokens: %d", len(tokens))
+    return tokens
 
 
 def is_port_open(target: Optional[Tuple[str, int]], timeout: float = 0.2) -> bool:
@@ -118,17 +141,17 @@ class VMConsoleHandler(BaseHTTPRequestHandler):
             self.send_error(HTTPStatus.BAD_REQUEST, "Parameter 'vm' is required")
             return
 
-        args = self.server.args
-        if not resolve_vnc_target(args.token_source, vm_name):
+        if vm_name not in self.server.tokens:
             self.send_error(HTTPStatus.NOT_FOUND, f"VM '{vm_name}' not registered")
             return
 
+        args = self.server.args
         template_file = os.path.join(args.webroot, "console.html")
         try:
             with open(template_file, "r", encoding="utf-8") as f:
                 raw_html = f.read()
         except OSError:
-            logging.error("Шаблон не найден: %s", template_file)
+            logging.error("Template not found: %s", template_file)
             self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "UI Template missing")
             return
 
@@ -139,23 +162,27 @@ class VMConsoleHandler(BaseHTTPRequestHandler):
         self.send_payload(HTTPStatus.OK, rendered.encode("utf-8"), "text/html; charset=utf-8")
 
     def handle_status(self, vm_name: str) -> None:
-        target = resolve_vnc_target(self.server.args.token_source, vm_name) if vm_name else None
+        target = self.server.tokens.get(vm_name) if vm_name else None
         status = b"RUNNING" if is_port_open(target) else b"STOPPED"
-        self.send_payload(HTTPStatus.OK, status, "text/plain; charset=utf-8")
+        self.send_payload(HTTPStatus.OK, status, "text/plain; charset=utf-8", no_cache=True)
 
     def handle_start(self, vm_name: str) -> None:
         if not vm_name:
             self.send_error(HTTPStatus.BAD_REQUEST, "Parameter 'vm' is required")
             return
 
-        logging.info("API: Запуск виртуальной машины '%s'", vm_name)
+        if vm_name not in self.server.tokens:
+            self.send_error(HTTPStatus.NOT_FOUND, f"VM '{vm_name}' not registered")
+            return
+
+        logging.info("API: Starting VM '%s'", vm_name)
         subprocess.Popen(
             [VMCTRL_BIN, "start", vm_name],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
-        self.send_payload(HTTPStatus.OK, b"OK", "text/plain; charset=utf-8")
+        self.send_payload(HTTPStatus.OK, b"OK", "text/plain; charset=utf-8", no_cache=True)
 
     def handle_favicon(self, vm_name: str) -> None:
         default_icon = os.path.join(ICONS_DIR, "default.png")
@@ -184,7 +211,7 @@ class VMConsoleHandler(BaseHTTPRequestHandler):
 def main() -> None:
     default_webroot = os.path.dirname(os.path.abspath(__file__))
 
-    parser = argparse.ArgumentParser(description="vnc2ws-server: Student VM console server")
+    parser = argparse.ArgumentParser(description="vnc2ws-server: Virtual Machines Console Server")
     parser.add_argument("listen", nargs="?", default="0.0.0.0:8081")
     parser.add_argument("--proxy-port", type=int, default=8080)
     parser.add_argument("--token-source", default="/srv/qemu/tokens.conf")
@@ -192,16 +219,23 @@ def main() -> None:
     parser.add_argument("--novncroot", default="/usr/share/novnc")
     args = parser.parse_args()
 
+    try:
+        addr = parse_endpoint(args.listen)
+    except Exception as e:
+        logging.critical("Invalid listen address '%s': %s", args.listen, e)
+        sys.exit(1)
+
+    tokens = load_tokens(args.token_source)
+
     args.webroot = os.path.abspath(args.webroot)
     args.novncroot = os.path.abspath(args.novncroot)
 
-    host, _, port_str = args.listen.rpartition(":")
-    addr = (host or "0.0.0.0", int(port_str))
-
     server = ThreadingHTTPServer(addr, VMConsoleHandler)
     server.args = args
+    server.tokens = tokens
 
-    logging.info("Student Console Server started on http://%s:%s", addr[0], addr[1])
+    host, port = addr
+    logging.info("Virtual Machines Console Server started on http://%s:%s", host, port)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

@@ -2,9 +2,7 @@
 import argparse
 import asyncio
 from functools import partial
-import ipaddress
 import logging
-import re
 import socket
 import sys
 from typing import Dict, Optional, Tuple
@@ -22,6 +20,15 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 TokensMap = Dict[str, Tuple[str, int]]
 
 
+def parse_endpoint(addr: str) -> Tuple[str, int]:
+    host, sep, port_str = addr.strip().rpartition(":")
+    port = int(port_str)
+    if not sep or not host or not (1 <= port <= 65535):
+        raise ValueError(f"некорректный адрес '{addr}'")
+    socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
+    return host.strip(), port
+
+
 def load_tokens(filepath: str) -> TokensMap:
     """Загружает и валидирует файл токенов."""
     tokens: TokensMap = {}
@@ -32,14 +39,13 @@ def load_tokens(filepath: str) -> TokensMap:
                 if not line or line.startswith("#"):
                     continue
 
-                token, host_str, port_str = [p.strip() for p in line.split(":")]
-                ip_str = str(ipaddress.IPv4Address(host_str))
-                port = int(port_str)
+                token_part, sep, target_part = line.partition(":")
+                token = token_part.strip()
 
-                if not token or token in tokens or not (1 <= port <= 65535):
-                    raise ValueError("некорректный токен, дубликат или порт")
+                if not sep or not token or token in tokens:
+                    raise ValueError("некорректный формат, пустой или дублирующийся токен")
 
-                tokens[token] = (ip_str, port)
+                tokens[token] = parse_endpoint(target_part)
     except Exception as e:
         line_info = f" (строка {line_num})" if "line_num" in locals() else ""
         logging.critical("Ошибка загрузки %s%s: %s", filepath, line_info, e)
@@ -149,19 +155,11 @@ async def main(listen_host: str, listen_port: int, tokens_map: TokensMap):
         subprotocols=["binary"],
         ping_interval=15,
         ping_timeout=10,
-        max_size=1024 * 1024,
+        max_size=None,
         reuse_address=True,
     ):
         logging.info("VNC-to-WebSocket Bridge запущен на %s:%s", listen_host, listen_port)
         await asyncio.Event().wait()
-
-
-def valid_listen_address(netloc: str) -> Tuple[str, int]:
-    try:
-        host, port_str = netloc.rsplit(":", 1) if ":" in netloc else ("0.0.0.0", netloc)
-        return host, int(port_str)
-    except ValueError:
-        raise argparse.ArgumentTypeError(f"'{netloc}' не является валидным сетевым адресом.")
 
 
 if __name__ == "__main__":
@@ -169,15 +167,19 @@ if __name__ == "__main__":
     parser.add_argument(
         "listen_target",
         nargs="?",
-        type=valid_listen_address,
         default="0.0.0.0:8080",
         help="Адрес и порт прослушивания (по умолчанию 0.0.0.0:8080)",
     )
     parser.add_argument("--token-source", default="/srv/qemu/tokens.conf")
     args = parser.parse_args()
 
+    try:
+        host, port = parse_endpoint(args.listen_target)
+    except Exception as e:
+        logging.critical("Некорректный адрес прослушивания '%s': %s", args.listen_target, e)
+        sys.exit(1)
+
     tokens_map = load_tokens(args.token_source)
-    host, port = args.listen_target
 
     try:
         asyncio.run(main(host, port, tokens_map))
