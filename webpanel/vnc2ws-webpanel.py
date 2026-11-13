@@ -27,26 +27,43 @@ logging.basicConfig(
     datefmt="%Y/%m/%d %H:%M:%S",
 )
 
+TokensMap = Dict[str, Tuple[str, int]]
 
-def load_raw_tokens(tokens_path: str) -> List[Dict[str, Any]]:
-    """Читает файл с токенами и возвращает список словарей с параметрами ВМ."""
-    vms: List[Dict[str, Any]] = []
+
+def parse_endpoint(addr: str) -> Tuple[str, int]:
+    """Разбирает и валидирует адрес 'host:port' (IPv4 или DNS) через ОС."""
+    host, sep, port_str = addr.strip().rpartition(":")
+    port = int(port_str)
+    if not sep or not host or not (1 <= port <= 65535):
+        raise ValueError(f"invalid endpoint address '{addr}'")
+    socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
+    return host.strip(), port
+
+
+def load_tokens(filepath: str) -> TokensMap:
+    """Загружает и валидирует статический файл токенов при старте."""
+    tokens: TokensMap = {}
     try:
-        with open(tokens_path, "r", encoding="utf-8") as f:
-            for raw_line in f:
+        with open(filepath, "r", encoding="utf-8") as f:
+            for line_num, raw_line in enumerate(f, 1):
                 line = raw_line.strip()
                 if not line or line.startswith("#"):
                     continue
-                match = TOKEN_PATTERN.match(line)
-                if match:
-                    vms.append({
-                        "token": match.group(1),
-                        "ip": match.group(2),
-                        "port": int(match.group(3)),
-                    })
-    except OSError as exc:
-        logging.error("Не удалось прочитать файл токенов %s: %s", tokens_path, exc)
-    return vms
+
+                token_part, sep, target_part = line.partition(":")
+                token = token_part.strip()
+
+                if not sep or not token or token in tokens:
+                    raise ValueError("invalid, empty, or duplicate token")
+
+                tokens[token] = parse_endpoint(target_part)
+    except Exception as e:
+        line_info = f" (line {line_num})" if "line_num" in locals() else ""
+        logging.critical("Failed to load %s%s: %s", filepath, line_info, e)
+        sys.exit(1)
+
+    logging.info("Loaded tokens: %d", len(tokens))
+    return tokens
 
 
 def resolve_vnc_target(tokens_path: str, vm_name: str) -> Optional[Tuple[str, int]]:
@@ -94,7 +111,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
 
     def send_json(self, data: Any, status: HTTPStatus = HTTPStatus.OK) -> None:
         body = json.dumps(data).encode("utf-8")
-        self.send_payload(status, body, "application/json; charset=utf-8")
+        self.send_payload(status, body, "application/json; charset=utf-8", no_cache=True)
 
     def send_safe_static(self, base_dir: str, relative_path: str, default_mime: str = "application/octet-stream") -> None:
         """Безопасная отдача статического файла из указанного каталога."""
@@ -150,17 +167,17 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             self.send_error(HTTPStatus.BAD_REQUEST, "Parameter 'vm' is required")
             return
 
-        args = self.server.args
-        if not resolve_vnc_target(args.token_source, vm_name):
+        if vm_name not in self.server.tokens:
             self.send_error(HTTPStatus.NOT_FOUND, f"VM '{vm_name}' not registered")
             return
 
+        args = self.server.args
         template_file = os.path.join(args.consoledir, "console.html")
         try:
             with open(template_file, "r", encoding="utf-8") as f:
                 raw_html = f.read()
         except OSError:
-            logging.error("Шаблон консоли не найден: %s", template_file)
+            logging.error("Template not found: %s", template_file)
             self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Console template missing")
             return
 
@@ -172,14 +189,14 @@ class WebPanelHandler(BaseHTTPRequestHandler):
 
     def handle_status(self, vm_name: str) -> None:
         """Точечная проверка статуса одной ВМ (используется внутри console.html)."""
-        target = resolve_vnc_target(self.server.args.token_source, vm_name) if vm_name else None
+        target = self.server.tokens.get(vm_name) if vm_name else None
         if target:
             host, port = target
             is_up = is_port_open(host, port, timeout=0.2)
         else:
             is_up = False
         status = b"RUNNING" if is_up else b"STOPPED"
-        self.send_payload(HTTPStatus.OK, status, "text/plain; charset=utf-8")
+        self.send_payload(HTTPStatus.OK, status, "text/plain; charset=utf-8", no_cache=True)
 
     def handle_start(self, vm_name: str) -> None:
         """Запуск виртуальной машины по команде с панели инструктора."""
@@ -187,42 +204,47 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             self.send_error(HTTPStatus.BAD_REQUEST, "Parameter 'vm' is required")
             return
 
-        if not resolve_vnc_target(self.server.args.token_source, vm_name):
+        if vm_name not in self.server.tokens:
             self.send_error(HTTPStatus.NOT_FOUND, f"VM '{vm_name}' not registered")
             return
 
-        logging.info("API (Инструктор): Запуск виртуальной машины '%s'", vm_name)
+        logging.info("API: Starting VM '%s'", vm_name)
         subprocess.Popen(
             [VMCTRL_BIN, "start", vm_name],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
-        self.send_payload(HTTPStatus.OK, b"OK", "text/plain; charset=utf-8")
+        self.send_payload(HTTPStatus.OK, b"OK", "text/plain; charset=utf-8", no_cache=True)
 
     def handle_tokens(self) -> None:
         args = self.server.args
+        vms_list = [
+            {"token": token, "ip": host, "port": port}
+            for token, (host, port) in self.server.tokens.items()
+        ]
         response = {
             "config": {
                 "pythonPort": args.port,
                 "proxyPort": args.wport,
             },
-            "vms": load_raw_tokens(args.token_source),
+            "vms": vms_list,
         }
         self.send_json(response)
 
     def handle_ping(self) -> None:
         """Параллельное сканирование всех ВМ для обновления дерева инструктора."""
-        vms = load_raw_tokens(self.server.args.token_source)
-        if not vms:
+        items = list(self.server.tokens.items())
+        if not items:
             self.send_json({})
             return
 
-        def check_vm(vm: Dict[str, Any]) -> Tuple[str, bool]:
-            return f"{vm['ip']}:{vm['token']}", is_port_open(vm["ip"], vm["port"])
+        def check_vm(item: Tuple[str, Tuple[str, int]]) -> Tuple[str, bool]:
+            token, (host, port) = item
+            return f"{host}:{token}", is_port_open(host, port)
 
-        with ThreadPoolExecutor(max_workers=min(32, len(vms))) as pool:
-            results = dict(pool.map(check_vm, vms))
+        with ThreadPoolExecutor(max_workers=min(32, len(items))) as pool:
+            results = dict(pool.map(check_vm, items))
 
         self.send_json(results)
 
@@ -243,6 +265,15 @@ def main() -> None:
     parser.add_argument("--consoledir", default=default_console_dir, help="Каталог с шаблоном console.html из пакета vnc2ws-console")
     parser.add_argument("--novncroot", default="/usr/share/novnc", help="Системный каталог noVNC")
     args = parser.parse_args()
+
+    try:
+        addr = parse_endpoint(f"{args.bind}:{args.port}")
+    except Exception as e:
+        logging.critical("Invalid listen address '%s:%s': %s", args.bind, args.port, e)
+        sys.exit(1)
+
+    tokens = load_tokens(args.token_source)
+
     args.webroot = os.path.abspath(args.webroot)
     args.consoledir = os.path.abspath(args.consoledir)
     args.novncroot = os.path.abspath(args.novncroot)
@@ -250,18 +281,19 @@ def main() -> None:
     panel_file = os.path.join(args.webroot, "panel.html")
     console_file = os.path.join(args.consoledir, "console.html")
     if not os.path.isdir(args.novncroot) or not os.path.isfile(panel_file) or not os.path.isfile(console_file):
-        logging.fatal("[FATAL] Критические ресурсы (novncroot, panel.html или console.html) не найдены!")
+        logging.critical("Critical resources (novncroot, panel.html, or console.html) not found")
         sys.exit(1)
 
-    addr: Tuple[str, int] = (args.bind, args.port)
     server = ThreadingHTTPServer(addr, WebPanelHandler)
     server.args = args
+    server.tokens = tokens
 
-    logging.info("Веб-панель запущена на http://%s:%s (webroot: %s, consoledir: %s)", args.bind, args.port, args.webroot, args.consoledir)
+    host, port = addr
+    logging.info("WebPanel started on http://%s:%s (webroot: %s, consoledir: %s)", host, port, args.webroot, args.consoledir)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        logging.info("Остановка сервера...")
+        logging.info("Shutting down server...")
         server.server_close()
 
 
