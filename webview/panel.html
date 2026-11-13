@@ -277,7 +277,8 @@
                         const vmLi = document.createElement('li');
                         vmLi.className = 'vm-item';
                         vmLi.id = this.stringToHash(`${vm.ip}-${vm.token}`);
-                        vmLi.textContent = vm.token;
+                        vmLi.textContent = vm.token.split('@')[0];
+                        vmLi.title = vm.token
                         vmLi.dataset.token = vm.token;
                         vmLi.dataset.ip = vm.ip;
 

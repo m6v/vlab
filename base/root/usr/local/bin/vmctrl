@@ -44,8 +44,11 @@ if [ -z "$2" ]; then
     exit 1
 fi
 
-# Последний аргумент всегда имя виртуальной машины
-export VM_NAME="${@:$#}"
+# Последний аргумент всегда имя виртуальной машины и опционально адрес после символа @, например, arm@192.168.1.1
+TARGET="${@:$#}"
+export VM_NAME="${TARGET%%@*}"
+VM_HOST="${TARGET#*@}"
+[[ "$VM_HOST" == "$TARGET" || -z "$VM_HOST" ]] && VM_HOST="127.0.0.1"
 
 # Пул с образами виртуальных машин, USB-дисков и т.п.
 USER_POOL="$HOME/.local/share/qemu/images"
@@ -61,7 +64,7 @@ fi
 VM_PARMS=$(envsubst '$USER,$HOME,$VM_NAME' < "$CONF_FILE")
 
 # Определение номера порта VNC с учетом базы 5900 и номера дисплея
-VNC_ADDR="127.0.0.1:$((5900 + $(echo "$VM_PARMS" | grep -Po '(?<=-vnc 0.0.0.0:)[0-9]+' || echo 0)))"
+VNC_ADDR="$VM_HOST:$((5900 + $(echo "$VM_PARMS" | grep -Po '(?<=-vnc 0.0.0.0:)[0-9]+' || echo 0)))"
 
 # Поиск подстроки -spice и взятие всего до ближайшего дефиса в круглые скобки
 if [[ "$VM_PARMS" =~ -spice[[:space:]]+([^-]+) ]]; then
@@ -80,7 +83,7 @@ if [[ "$VM_MONITOR" =~ "unix:" ]]; then
     VM_SOCK=UNIX-CONNECT:$VM_SOCK_FILE
 elif [[ "$VM_MONITOR" =~ "tcp:" ]]; then
     VM_SOCK_PORT=$(echo "$VM_MONITOR" | cut -d: -f3)
-    VM_SOCK=TCP:127.0.0.1:$VM_SOCK_PORT
+    VM_SOCK=TCP:$VM_HOST:$VM_SOCK_PORT
 else
     echo "Ошибка: Управляющий сокет для '${VM_NAME}' не найден." | tee /dev/stderr
     exit 1

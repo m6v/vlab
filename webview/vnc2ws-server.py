@@ -14,7 +14,7 @@ from string import Template
 from typing import Dict, Optional, Tuple
 from urllib.parse import parse_qs, urlsplit
 
-VM_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
+VM_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_.-]+(?:@[a-zA-Z0-9_.-]+)?$")
 TOKEN_PATTERN = re.compile(r"^([a-zA-Z0-9_-]+):\s*([0-9.]+):(\d+)")
 
 ICONS_DIR = "/usr/share/pixmaps"
@@ -155,8 +155,10 @@ class VMConsoleHandler(BaseHTTPRequestHandler):
             self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "UI Template missing")
             return
 
+        short_name = vm_name.split("@", 1).pop(0)
         rendered = Template(raw_html).safe_substitute(
             vm_name=html.escape(vm_name),
+            display_name=html.escape(short_name),
             proxy_port=args.proxy_port,
         )
         self.send_payload(HTTPStatus.OK, rendered.encode("utf-8"), "text/html; charset=utf-8")
