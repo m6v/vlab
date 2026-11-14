@@ -1,97 +1,90 @@
 #!/usr/bin/env python3
 import argparse
-import html
+import configparser
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import logging
 import mimetypes
-import os
-import re
-import socket
-import subprocess
+from pathlib import Path
 import sys
-from concurrent.futures import ThreadPoolExecutor
-from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from string import Template
-from typing import Any, Dict, List, Optional, Tuple
-from urllib.parse import parse_qs, urlsplit
-
-VM_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
-TOKEN_PATTERN = re.compile(r"^([a-zA-Z0-9_-]+):\s*([0-9.]+):(\d+)")
-
-VMCTRL_BIN = "/usr/local/bin/vmctrl"
+from typing import Any, Dict, List, Tuple
+from urllib.parse import urlsplit
+from urllib.request import urlopen
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%Y/%m/%d %H:%M:%S",
+    datefmt="%Y-%m-%d %H:%M:%S",
 )
 
-TokensMap = Dict[str, Tuple[str, int]]
+NodeInfo = Tuple[str, str, int]
 
 
-def parse_endpoint(addr: str) -> Tuple[str, int]:
-    """Разбирает и валидирует адрес 'host:port' (IPv4 или DNS) через ОС."""
-    host, sep, port_str = addr.strip().rpartition(":")
-    port = int(port_str)
-    if not sep or not host or not (1 <= port <= 65535):
-        raise ValueError(f"invalid endpoint address '{addr}'")
-    socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
-    return host.strip(), port
-
-
-def load_tokens(filepath: str) -> TokensMap:
-    """Загружает и валидирует статический файл токенов при старте."""
-    tokens: TokensMap = {}
-    try:
-        with open(filepath, "r", encoding="utf-8") as f:
-            for line_num, raw_line in enumerate(f, 1):
-                line = raw_line.strip()
-                if not line or line.startswith("#"):
-                    continue
-
-                token_part, sep, target_part = line.partition(":")
-                token = token_part.strip()
-
-                if not sep or not token or token in tokens:
-                    raise ValueError("invalid, empty, or duplicate token")
-
-                tokens[token] = parse_endpoint(target_part)
-    except Exception as e:
-        line_info = f" (line {line_num})" if "line_num" in locals() else ""
-        logging.critical("Failed to load %s%s: %s", filepath, line_info, e)
+def load_config(filepath: Path) -> Tuple[str, Path, float, List[NodeInfo]]:
+    """Читает конфигурационный файл."""
+    if not filepath.is_file():
+        logging.critical("Config file not found: %s", filepath)
         sys.exit(1)
 
-    logging.info("Loaded tokens: %d", len(tokens))
-    return tokens
-
-
-def resolve_vnc_target(tokens_path: str, vm_name: str) -> Optional[Tuple[str, int]]:
-    """Ищет (IP, порт) конкретной ВМ."""
-    for vm in load_raw_tokens(tokens_path):
-        if vm["token"] == vm_name:
-            return vm["ip"], vm["port"]
-    return None
-
-
-def is_port_open(host: str, port: int, timeout: float = 0.05) -> bool:
-    """Проверяет доступность TCP-порта VNC."""
+    parser = configparser.ConfigParser(inline_comment_prefixes=("#", ";"))
+    parser.optionxform = str
     try:
-        with socket.create_connection((host, port), timeout=timeout):
-            return True
-    except OSError:
-        return False
+        parser.read(filepath, encoding="utf-8")
+    except Exception as e:
+        logging.critical("Failed to parse %s: %s", filepath, e)
+        sys.exit(1)
+
+    default_webroot = str(Path(__file__).resolve().parent)
+    listen = parser.get("common", "listen", fallback="0.0.0.0:8000").strip()
+    webroot = Path(parser.get("common", "webroot", fallback=default_webroot).strip()).resolve()
+    timeout = parser.getfloat("common", "timeout", fallback=0.6)
+
+    if "nodes" not in parser:
+        logging.critical("Section [nodes] missing in %s", filepath)
+        sys.exit(1)
+
+    nodes: List[NodeInfo] = []
+    for addr, label in parser.items("nodes"):
+        host, sep, port_str = addr.strip().rpartition(":")
+        if sep and port_str.isdigit():
+            h, p = host.strip(), int(port_str)
+        else:
+            h, p = addr.strip(), 8081
+        nodes.append((label.strip() or h, h, p))
+
+    logging.info("Loaded lab nodes: %d", len(nodes))
+    return listen, webroot, timeout, nodes
 
 
-def is_path_within(target_path: str, base_dir: str) -> bool:
-    """Защита от выхода за пределы каталога (Path Traversal)."""
-    real_base = os.path.realpath(base_dir)
-    real_target = os.path.realpath(target_path)
-    return os.path.commonpath([real_base, real_target]) == real_base
+def fetch_node_status(node: NodeInfo, timeout: float = 0.6) -> Dict[str, Any]:
+    """Запрашивает /api/vms у рабочего места."""
+    label, host, console_port = node
+    url = f"http://{host}:{console_port}/api/vms"
+    try:
+        with urlopen(url, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return {
+            "label": label,
+            "host": host,
+            "consolePort": console_port,
+            "online": True,
+            "vms": data.get("vms", []),
+        }
+    except Exception:
+        return {
+            "label": label,
+            "host": host,
+            "consolePort": console_port,
+            "online": False,
+            "vms": [],
+        }
 
 
 class WebPanelHandler(BaseHTTPRequestHandler):
-    """Обработчик HTTP-запросов обзорной панели управления ВМ."""
+    """Обработчик HTTP-запросов обзорной панели инструктора."""
 
     def log_message(self, format: str, *args) -> None:
         logging.debug(format, *args)
@@ -101,7 +94,6 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Access-Control-Allow-Origin", "*")
             if no_cache:
                 self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
             self.end_headers()
@@ -109,187 +101,68 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
 
-    def send_json(self, data: Any, status: HTTPStatus = HTTPStatus.OK) -> None:
-        body = json.dumps(data).encode("utf-8")
-        self.send_payload(status, body, "application/json; charset=utf-8", no_cache=True)
-
-    def send_safe_static(self, base_dir: str, relative_path: str, default_mime: str = "application/octet-stream") -> None:
-        """Безопасная отдача статического файла из указанного каталога."""
-        clean_rel = relative_path.lstrip("/")
-        target_file = os.path.join(base_dir, clean_rel)
-
-        if not is_path_within(target_file, base_dir) or not os.path.isfile(target_file):
-            self.send_error(HTTPStatus.NOT_FOUND, "File not found")
-            return
-
+    def send_safe_file(self, base_dir: Path, rel_path: str, default_mime: str = "application/octet-stream") -> None:
         try:
-            with open(target_file, "rb") as f:
-                data = f.read()
-        except OSError:
+            target = (base_dir / rel_path.lstrip("/")).resolve()
+            base_resolved = base_dir.resolve()
+            if base_resolved != target and base_resolved not in target.parents:
+                raise ValueError("Path traversal")
+            data = target.read_bytes()
+        except Exception:
             self.send_error(HTTPStatus.NOT_FOUND, "File not found")
             return
 
-        mime_type, _ = mimetypes.guess_type(target_file)
-        self.send_payload(HTTPStatus.OK, data, mime_type or default_mime)
+        mime, _ = mimetypes.guess_type(str(target))
+        self.send_payload(HTTPStatus.OK, data, mime or default_mime)
 
     def do_GET(self) -> None:
-        parsed_url = urlsplit(self.path)
-        route = parsed_url.path
-        params = parse_qs(parsed_url.query)
-        vm_list = params.get("vm")
-        vm_name = vm_list.pop(0).strip() if vm_list else ""
-
-        if vm_name and not VM_NAME_PATTERN.match(vm_name):
-            self.send_error(HTTPStatus.BAD_REQUEST, "Invalid VM name format")
-            return
+        route = urlsplit(self.path).path
 
         if route in ("/", "/panel.html"):
-            self.send_safe_static(self.server.args.webroot, "panel.html", "text/html; charset=utf-8")
-        elif route in ("/console", "/console.html"):
-            self.handle_console(vm_name)
-        elif route == "/status":
-            self.handle_status(vm_name)
-        elif route == "/start":
-            self.handle_start(vm_name)
-        elif route == "/api/tokens":
-            self.handle_tokens()
-        elif route == "/api/ping":
-            self.handle_ping()
-        elif route.startswith("/novnc/"):
-            rel_path = route[len("/novnc/"):]
-            self.send_safe_static(self.server.args.novncroot, rel_path, "text/plain")
+            self.send_safe_file(self.server.webroot, "panel.html", "text/html; charset=utf-8")
+        elif route == "/api/nodes":
+            self.handle_nodes()
         else:
-            self.send_safe_static(self.server.args.webroot, route)
+            self.send_safe_file(self.server.webroot, route)
 
-    def handle_console(self, vm_name: str) -> None:
-        """Отдает общий шаблон console.html из пакета vnc2ws-console."""
-        if not vm_name:
-            self.send_error(HTTPStatus.BAD_REQUEST, "Parameter 'vm' is required")
+    def handle_nodes(self) -> None:
+        nodes = self.server.nodes
+        if not nodes:
+            self.send_payload(HTTPStatus.OK, b"[]", "application/json; charset=utf-8", no_cache=True)
             return
 
-        if vm_name not in self.server.tokens:
-            self.send_error(HTTPStatus.NOT_FOUND, f"VM '{vm_name}' not registered")
-            return
+        worker = partial(fetch_node_status, timeout=self.server.timeout)
+        with ThreadPoolExecutor(max_workers=min(32, len(nodes))) as pool:
+            result = list(pool.map(worker, nodes))
 
-        args = self.server.args
-        template_file = os.path.join(args.consoledir, "console.html")
-        try:
-            with open(template_file, "r", encoding="utf-8") as f:
-                raw_html = f.read()
-        except OSError:
-            logging.error("Template not found: %s", template_file)
-            self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Console template missing")
-            return
-
-        rendered = Template(raw_html).safe_substitute(
-            vm_name=html.escape(vm_name),
-            proxy_port=args.wport,
-        )
-        self.send_payload(HTTPStatus.OK, rendered.encode("utf-8"), "text/html; charset=utf-8")
-
-    def handle_status(self, vm_name: str) -> None:
-        """Точечная проверка статуса одной ВМ (используется внутри console.html)."""
-        target = self.server.tokens.get(vm_name) if vm_name else None
-        if target:
-            host, port = target
-            is_up = is_port_open(host, port, timeout=0.2)
-        else:
-            is_up = False
-        status = b"RUNNING" if is_up else b"STOPPED"
-        self.send_payload(HTTPStatus.OK, status, "text/plain; charset=utf-8", no_cache=True)
-
-    def handle_start(self, vm_name: str) -> None:
-        """Запуск виртуальной машины по команде с панели инструктора."""
-        if not vm_name:
-            self.send_error(HTTPStatus.BAD_REQUEST, "Parameter 'vm' is required")
-            return
-
-        if vm_name not in self.server.tokens:
-            self.send_error(HTTPStatus.NOT_FOUND, f"VM '{vm_name}' not registered")
-            return
-
-        logging.info("API: Starting VM '%s'", vm_name)
-        subprocess.Popen(
-            [VMCTRL_BIN, "start", vm_name],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-        self.send_payload(HTTPStatus.OK, b"OK", "text/plain; charset=utf-8", no_cache=True)
-
-    def handle_tokens(self) -> None:
-        args = self.server.args
-        vms_list = [
-            {"token": token, "ip": host, "port": port}
-            for token, (host, port) in self.server.tokens.items()
-        ]
-        response = {
-            "config": {
-                "pythonPort": args.port,
-                "proxyPort": args.wport,
-            },
-            "vms": vms_list,
-        }
-        self.send_json(response)
-
-    def handle_ping(self) -> None:
-        """Параллельное сканирование всех ВМ для обновления дерева инструктора."""
-        items = list(self.server.tokens.items())
-        if not items:
-            self.send_json({})
-            return
-
-        def check_vm(item: Tuple[str, Tuple[str, int]]) -> Tuple[str, bool]:
-            token, (host, port) = item
-            return f"{host}:{token}", is_port_open(host, port)
-
-        with ThreadPoolExecutor(max_workers=min(32, len(items))) as pool:
-            results = dict(pool.map(check_vm, items))
-
-        self.send_json(results)
+        body = json.dumps(result).encode("utf-8")
+        self.send_payload(HTTPStatus.OK, body, "application/json; charset=utf-8", no_cache=True)
 
 
 def main() -> None:
-    default_webroot = os.path.dirname(os.path.abspath(__file__))
-    system_console_dir = "/usr/share/vnc2ws"
-    default_console_dir = system_console_dir if os.path.isfile(os.path.join(system_console_dir, "console.html")) else default_webroot
-
-    parser = argparse.ArgumentParser(
-        description="vnc2ws-webpanel: Instructor control panel and state monitoring scanner."
-    )
-    parser.add_argument("-b", "--bind", default="0.0.0.0", help="IP-адрес прослушивания (default: 0.0.0.0)")
-    parser.add_argument("-p", "--port", type=int, default=8000, help="Порт веб-интерфейса панели (default: 8000)")
-    parser.add_argument("-w", "--wport", "--proxy-port", dest="wport", type=int, default=8080, help="Порт WebSocket-прокси (default: 8080)")
-    parser.add_argument("--token-source", default="/srv/qemu/tokens.conf", help="Путь к файлу tokens.conf")
-    parser.add_argument("--webroot", default=default_webroot, help="Каталог с panel.html и иконками")
-    parser.add_argument("--consoledir", default=default_console_dir, help="Каталог с шаблоном console.html из пакета vnc2ws-console")
-    parser.add_argument("--novncroot", default="/usr/share/novnc", help="Системный каталог noVNC")
+    parser = argparse.ArgumentParser(description="vnc2ws-webpanel: Instructor web panel")
+    parser.add_argument("-c", "--config", default="/srv/qemu/webpanel.conf", help="Path to config file")
     args = parser.parse_args()
 
+    listen, webroot, timeout, nodes = load_config(Path(args.config))
+
+    if not (webroot / "panel.html").is_file():
+        logging.critical("panel.html not found in %s", webroot)
+        sys.exit(1)
+
     try:
-        addr = parse_endpoint(f"{args.bind}:{args.port}")
+        host, port_str = listen.rpartition(":")[::2]
+        addr = (host or "0.0.0.0", int(port_str))
+        server = ThreadingHTTPServer(addr, WebPanelHandler)
     except Exception as e:
-        logging.critical("Invalid listen address '%s:%s': %s", args.bind, args.port, e)
+        logging.critical("Failed to start webpanel on '%s': %s", listen, e)
         sys.exit(1)
 
-    tokens = load_tokens(args.token_source)
+    server.nodes = nodes
+    server.webroot = webroot
+    server.timeout = timeout
 
-    args.webroot = os.path.abspath(args.webroot)
-    args.consoledir = os.path.abspath(args.consoledir)
-    args.novncroot = os.path.abspath(args.novncroot)
-
-    panel_file = os.path.join(args.webroot, "panel.html")
-    console_file = os.path.join(args.consoledir, "console.html")
-    if not os.path.isdir(args.novncroot) or not os.path.isfile(panel_file) or not os.path.isfile(console_file):
-        logging.critical("Critical resources (novncroot, panel.html, or console.html) not found")
-        sys.exit(1)
-
-    server = ThreadingHTTPServer(addr, WebPanelHandler)
-    server.args = args
-    server.tokens = tokens
-
-    host, port = addr
-    logging.info("WebPanel started on http://%s:%s (webroot: %s, consoledir: %s)", host, port, args.webroot, args.consoledir)
+    logging.info("Instructor WebPanel started on http://%s:%s", addr, addr)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

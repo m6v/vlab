@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import html
+import json
 import logging
 import mimetypes
 from pathlib import Path
@@ -73,7 +74,6 @@ def load_qemu_configs(configs_dir: Path) -> VncMap:
             except Exception as e:
                 logging.error("Failed to parse %s: %s", conf.name, e)
 
-    logging.info("Total VM configs loaded: %d", len(vms))
     return vms
 
 
@@ -143,6 +143,8 @@ class VMConsoleHandler(BaseHTTPRequestHandler):
             self.handle_favicon(vm_name)
         elif route.startswith("/novnc/"):
             self.send_safe_file(self.server.novncroot, route[len("/novnc/"):], "text/plain")
+        elif route == "/api/vms":
+            self.handle_api_vms()
         else:
             self.send_error(HTTPStatus.NOT_FOUND, "Not Found")
 
@@ -196,6 +198,18 @@ class VMConsoleHandler(BaseHTTPRequestHandler):
             self.send_payload(HTTPStatus.NO_CONTENT, b"", "image/png")
             return
         self.send_safe_file(ICONS_DIR, candidate.name, "image/png")
+
+    def handle_api_vms(self) -> None:
+        """Возвращает список локальных ВМ и их текущие статусы по запросу с панели инструктора."""
+        vms_data = [
+            {"name": name, "running": is_port_open(target, timeout=0.1)}
+            for name, target in self.server.vms.items()
+        ]
+        payload = json.dumps({
+            "proxy_port": self.server.proxy_port,
+            "vms": vms_data,
+        }).encode("utf-8")
+        self.send_payload(HTTPStatus.OK, payload, "application/json; charset=utf-8", no_cache=True)
 
 
 def main() -> None:

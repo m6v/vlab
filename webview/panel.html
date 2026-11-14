@@ -210,8 +210,8 @@
 
     <script>
         const WebPanel = {
-            selectedVmToken: null,
-            serverConfig: { pythonPort: 8000, proxyPort: 8080 },
+            selectedVmKey: null,
+            lastStructureHash: '',
 
             stringToHash(str) {
                 let hash = 0;
@@ -224,42 +224,56 @@
                 return 'i' + Math.abs(hash).toString(16);
             },
 
+            resolveNodeHost(host) {
+                return (host === '127.0.0.1' || host === 'localhost')
+                    ? window.location.hostname
+                    : host;
+            },
+
             async init() {
+                await this.refreshNodes();
+                setInterval(() => this.refreshNodes(), 3000);
+            },
+
+            async refreshNodes() {
                 try {
-                    const response = await fetch('/api/tokens');
+                    const response = await fetch('/api/nodes', { cache: 'no-store' });
                     if (!response.ok) return;
-                    const data = await response.json();
+                    const nodes = await response.json();
 
-                    if (data.config) this.serverConfig = data.config;
+                    const structureSig = nodes
+                        .map(n => `${n.host}:${n.online}:${n.vms.map(v => v.name).join(',')}`)
+                        .join('|');
 
-                    const treeData = {};
-                    if (data.vms) {
-                        data.vms.forEach(vm => {
-                            const hostGroup = String(vm.ip);
-                            if (!treeData[hostGroup]) {
-                                treeData[hostGroup] = { ip: vm.ip, vms: [] };
-                            }
-                            treeData[hostGroup].vms.push(vm);
-                        });
+                    if (structureSig !== this.lastStructureHash) {
+                        this.lastStructureHash = structureSig;
+                        this.buildTree(nodes);
                     }
 
-                    this.buildTree(treeData);
-                    await this.checkStatuses();
-                    setInterval(() => this.checkStatuses(), 3000);
+                    this.updateStatuses(nodes);
                 } catch (e) {
-                    console.error("Ошибка инициализации дерева:", e);
+                    console.error("Ошибка опроса рабочих мест:", e);
                 }
             },
 
-            buildTree(treeData) {
+            buildTree(nodes) {
                 const treeContainer = document.getElementById('pve-tree');
+
+                const userToggledMap = {};
+                treeContainer.querySelectorAll('.node-item').forEach(el => {
+                    if (el.dataset.userToggled) {
+                        userToggledMap[el.dataset.host] = el.classList.contains('collapsed');
+                    }
+                });
+
                 treeContainer.textContent = '';
 
-                Object.entries(treeData).forEach(([hostName, hostInfo]) => {
+                nodes.forEach(node => {
                     const hostBlock = document.createElement('div');
                     const nodeItem = document.createElement('div');
                     nodeItem.className = 'node-item';
-                    nodeItem.dataset.host = hostName;
+                    nodeItem.dataset.host = node.host;
+                    nodeItem.title = `${node.host}:${node.consolePort}`;
 
                     const toggleSpan = document.createElement('span');
                     toggleSpan.className = 'node-toggle';
@@ -267,33 +281,47 @@
                     nodeItem.appendChild(toggleSpan);
 
                     const nameSpan = document.createElement('span');
-                    nameSpan.textContent = hostName;
+                    nameSpan.textContent = node.online ? node.label : `${node.label} (offline)`;
+                    if (!node.online) {
+                        nameSpan.style.opacity = '0.5';
+                    }
                     nodeItem.appendChild(nameSpan);
 
                     const vmSublist = document.createElement('ul');
                     vmSublist.className = 'vm-sublist';
 
-                    hostInfo.vms.forEach(vm => {
+                    if (node.host in userToggledMap) {
+                        nodeItem.dataset.userToggled = 'true';
+                        if (userToggledMap[node.host]) {
+                            nodeItem.classList.add('collapsed');
+                            vmSublist.classList.add('hidden');
+                        }
+                    }
+
+                    node.vms.forEach(vm => {
+                        const vmKey = `${node.host}-${vm.name}`;
                         const vmLi = document.createElement('li');
                         vmLi.className = 'vm-item';
-                        vmLi.id = this.stringToHash(`${vm.ip}-${vm.token}`);
-                        vmLi.textContent = vm.token;
-                        vmLi.dataset.token = vm.token;
-                        vmLi.dataset.ip = vm.ip;
+                        vmLi.id = this.stringToHash(vmKey);
+                        vmLi.textContent = vm.name.split('@').shift();
+                        vmLi.title = vm.name;
+
+                        if (this.selectedVmKey === vmKey) {
+                            vmLi.classList.add('active');
+                        }
 
                         vmLi.addEventListener('click', () => {
                             document.querySelectorAll('.vm-item').forEach(el => el.classList.remove('active'));
                             vmLi.classList.add('active');
-                            this.selectedVmToken = vm.token;
+                            this.selectedVmKey = vmKey;
 
                             document.getElementById('placeholder').style.display = 'none';
                             const iframe = document.getElementById('vnc-frame');
                             iframe.style.display = 'block';
 
-                            const params = new URLSearchParams({
-                                vm: vm.token
-                            });
-                            iframe.src = `/console?${params.toString()}`;
+                            const targetHost = this.resolveNodeHost(node.host);
+                            const params = new URLSearchParams({ vm: vm.name });
+                            iframe.src = `http://${targetHost}:${node.consolePort}/?${params.toString()}`;
                         });
 
                         vmSublist.appendChild(vmLi);
@@ -310,45 +338,36 @@
                     treeContainer.appendChild(hostBlock);
                 });
             },
-            async checkStatuses() {
-                try {
-                    const response = await fetch('/api/ping');
-                    if (!response.ok) return;
-                    const states = await response.json();
 
-                    Object.entries(states).forEach(([stateKey, isOnline]) => {
-                        const sepIdx = stateKey.indexOf(':');
-                        const ip = stateKey.slice(0, sepIdx);
-                        const token = stateKey.slice(sepIdx + 1);
-                        const el = document.getElementById(this.stringToHash(`${ip}-${token}`));
-
+            updateStatuses(nodes) {
+                nodes.forEach(node => {
+                    node.vms.forEach(vm => {
+                        const el = document.getElementById(this.stringToHash(`${node.host}-${vm.name}`));
                         if (el) {
-                            el.classList.toggle('online', Boolean(isOnline));
+                            el.classList.toggle('online', Boolean(vm.running));
                         }
                     });
+                });
 
-                    document.querySelectorAll('.node-item').forEach(node => {
-                        const sublist = node.nextElementSibling;
-                        const hasOnlineVms = Boolean(sublist && sublist.querySelector('.online'));
+                document.querySelectorAll('.node-item').forEach(nodeEl => {
+                    const sublist = nodeEl.nextElementSibling;
+                    const hasOnlineVms = Boolean(sublist && sublist.querySelector('.online'));
 
-                        if (hasOnlineVms) {
-                            node.classList.add('node-active');
-                            if (node.classList.contains('collapsed') && !node.dataset.userToggled) {
-                                node.classList.remove('collapsed');
-                                sublist.classList.remove('hidden');
-                            }
-                        } else {
-                            node.classList.remove('node-active');
-                            delete node.dataset.userToggled;
-                            if (!node.classList.contains('collapsed')) {
-                                node.classList.add('collapsed');
-                                sublist.classList.add('hidden');
-                            }
+                    if (hasOnlineVms) {
+                        nodeEl.classList.add('node-active');
+                        if (nodeEl.classList.contains('collapsed') && !nodeEl.dataset.userToggled) {
+                            nodeEl.classList.remove('collapsed');
+                            sublist.classList.remove('hidden');
                         }
-                    });
-                } catch (e) {
-                    console.error("Ошибка опроса статусов:", e);
-                }
+                    } else {
+                        nodeEl.classList.remove('node-active');
+                        delete nodeEl.dataset.userToggled;
+                        if (!nodeEl.classList.contains('collapsed')) {
+                            nodeEl.classList.add('collapsed');
+                            sublist.classList.add('hidden');
+                        }
+                    }
+                });
             }
         };
 

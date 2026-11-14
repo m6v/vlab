@@ -27,7 +27,7 @@ deb:
 	@chmod 755 $(BUILD_PATH)/DEBIAN/prerm
 
 	@mkdir -p $(BUILD_PATH)$(TARGET_PATH)
-	@cp -a console.html panel.html $(SERVER_NAME).py $(PANEL_NAME).py $(BUILD_PATH)$(TARGET_PATH)
+	@cp -a console.html panel.html webpanel.conf $(SERVER_NAME).py $(PANEL_NAME).py $(BUILD_PATH)$(TARGET_PATH)
 	@mkdir -p $(BUILD_PATH)$(PIXMAPS_PATH)
 	@cp -a virt-manager.png $(BUILD_PATH)$(PIXMAPS_PATH)
 
