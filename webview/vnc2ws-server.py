@@ -3,7 +3,7 @@ import argparse
 import html
 import logging
 import mimetypes
-import os
+from pathlib import Path
 import re
 import socket
 import subprocess
@@ -15,9 +15,9 @@ from typing import Dict, Optional, Tuple
 from urllib.parse import parse_qs, urlsplit
 
 VM_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_.-]+(?:@[a-zA-Z0-9_.-]+)?$")
-VNC_ARG_RE = re.compile(r"(?:^|\s)-vnc(?:\s+|=)(\S+)")
+VNC_RE = re.compile(r"(?:^|\s)-vnc(?:\s+|=)(\S+)")
 
-ICONS_DIR = "/usr/share/pixmaps"
+ICONS_DIR = Path("/usr/share/pixmaps")
 VMCTRL_BIN = "/usr/local/bin/vmctrl"
 
 VncMap = Dict[str, Tuple[str, int]]
@@ -25,33 +25,25 @@ VncMap = Dict[str, Tuple[str, int]]
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%Y/%m/%d %H:%M:%S",
+    datefmt="%Y-%m-%d %H:%M:%S",
 )
 
 
-def parse_endpoint(addr: str) -> Tuple[str, int]:
-    """Разбирает и валидирует адрес 'host:port' для прослушивания."""
-    host, sep, port_str = addr.strip().rpartition(":")
-    port = int(port_str)
-    if not sep or not host or not (1 <= port <= 65535):
-        raise ValueError(f"invalid endpoint address '{addr}'")
-    socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
-    return host.strip(), port
-
-
 def parse_vnc_spec(spec: str) -> Tuple[str, int]:
-    """Преобразует аргумент QEMU '-vnc host:display[,opts]' в (ip, tcp_port)."""
+    """Преобразует QEMU '-vnc host:display[,opts]' в (ip, tcp_port)."""
     target, _, _ = spec.strip().partition(",")
-    host_part, sep, disp_part = target.rpartition(":")
-    if not sep or not disp_part.isdigit():
+    host, sep, disp_str = target.rpartition(":")
+    if not sep or not disp_str.isdigit():
         raise ValueError(f"invalid -vnc specification '{spec}'")
 
-    host = host_part.strip()
+    host = host.strip()
     if not host or host == "0.0.0.0":
         host = "127.0.0.1"
 
-    disp = int(disp_part)
-    port = disp + 5900 if disp < 5900 else disp
+    port = int(disp_str)
+    if port < 5900:
+        port += 5900
+
     if not (1 <= port <= 65535):
         raise ValueError(f"port out of range in '{spec}'")
 
@@ -59,46 +51,33 @@ def parse_vnc_spec(spec: str) -> Tuple[str, int]:
     return host, port
 
 
-def load_qemu_configs(configs_dir: str) -> VncMap:
-    """Сканирует каталог *.conf файлов QEMU и извлекает параметры -vnc."""
-    if not os.path.isdir(configs_dir):
+def load_qemu_configs(configs_dir: Path) -> VncMap:
+    """Сканирует *.conf файлы QEMU и извлекает адреса -vnc."""
+    if not configs_dir.is_dir():
         logging.critical("Configs directory not found: %s", configs_dir)
         sys.exit(1)
 
     vms: VncMap = {}
-    for filename in sorted(os.listdir(configs_dir)):
-        if not filename.endswith(".conf"):
-            continue
+    for conf in sorted(configs_dir.glob("*.conf")):
+        lines = [
+            l.strip().rstrip("\\")
+            for l in conf.read_text(encoding="utf-8").splitlines()
+            if not l.lstrip().startswith("#")
+        ]
+        match = VNC_RE.search(" ".join(lines))
+        if match:
+            try:
+                host, port = parse_vnc_spec(match.group(1))
+                vms[conf.stem] = (host, port)
+                logging.info("Loaded %s VNC socket (%s:%s)", conf.stem, host, port)
+            except Exception as e:
+                logging.error("Failed to parse %s: %s", conf.name, e)
 
-        vm_name = filename[:-5]
-        conf_path = os.path.join(configs_dir, filename)
-        if not os.path.isfile(conf_path):
-            continue
-
-        try:
-            with open(conf_path, "r", encoding="utf-8") as f:
-                parts = []
-                for raw_line in f:
-                    line = raw_line.split("#", 1).pop(0).rstrip(" \\\r\n\t").strip()
-                    if line:
-                        parts.append(line)
-
-            full_cmd = " ".join(parts)
-            match = VNC_ARG_RE.search(full_cmd)
-            if not match:
-                logging.warning("Skipping %s: '-vnc' parameter not found", filename)
-                continue
-
-            vms[vm_name] = parse_vnc_spec(match.group(1))
-        except Exception as exc:
-            logging.error("Failed to parse %s: %s", filename, exc)
-
-    logging.info("Loaded VM configs: %d", len(vms))
+    logging.info("Total VM configs loaded: %d", len(vms))
     return vms
 
 
 def is_port_open(target: Optional[Tuple[str, int]], timeout: float = 0.2) -> bool:
-    """Проверяет доступность TCP-порта VNC."""
     if not target:
         return False
     try:
@@ -106,13 +85,6 @@ def is_port_open(target: Optional[Tuple[str, int]], timeout: float = 0.2) -> boo
             return True
     except OSError:
         return False
-
-
-def is_path_within(target_path: str, base_dir: str) -> bool:
-    """Защита от выхода за пределы каталога (Path Traversal)."""
-    real_base = os.path.realpath(base_dir)
-    real_target = os.path.realpath(target_path)
-    return os.path.commonpath([real_base, real_target]) == real_base
 
 
 class VMConsoleHandler(BaseHTTPRequestHandler):
@@ -134,21 +106,24 @@ class VMConsoleHandler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
 
-    def send_file(self, file_path: str, default_mime: str = "application/octet-stream") -> None:
+    def send_safe_file(self, base_dir: Path, rel_path: str, default_mime: str = "application/octet-stream") -> None:
         try:
-            with open(file_path, "rb") as f:
-                data = f.read()
-        except OSError:
+            target = (base_dir / rel_path.lstrip("/")).resolve()
+            base_resolved = base_dir.resolve()
+            if base_resolved != target and base_resolved not in target.parents:
+                raise ValueError("Path traversal")
+            data = target.read_bytes()
+        except Exception:
             self.send_error(HTTPStatus.NOT_FOUND, "File not found")
             return
 
-        mime_type, _ = mimetypes.guess_type(file_path)
-        self.send_payload(HTTPStatus.OK, data, mime_type or default_mime)
+        mime, _ = mimetypes.guess_type(str(target))
+        self.send_payload(HTTPStatus.OK, data, mime or default_mime)
 
     def do_GET(self) -> None:
-        parsed_url = urlsplit(self.path)
-        route = parsed_url.path
-        params = parse_qs(parsed_url.query)
+        parsed = urlsplit(self.path)
+        route = parsed.path
+        params = parse_qs(parsed.query)
         vm_list = params.get("vm")
         vm_name = vm_list.pop(0).strip() if vm_list else ""
 
@@ -159,13 +134,15 @@ class VMConsoleHandler(BaseHTTPRequestHandler):
         if route in ("/", "/console", "/console.html"):
             self.handle_console(vm_name)
         elif route == "/status":
-            self.handle_status(vm_name)
+            target = self.server.vms.get(vm_name) if vm_name else None
+            status = b"RUNNING" if is_port_open(target) else b"STOPPED"
+            self.send_payload(HTTPStatus.OK, status, "text/plain; charset=utf-8", no_cache=True)
         elif route == "/start":
             self.handle_start(vm_name)
         elif route == "/favicon.ico":
             self.handle_favicon(vm_name)
         elif route.startswith("/novnc/"):
-            self.handle_novnc_static(route[len("/novnc/"):])
+            self.send_safe_file(self.server.novncroot, route[len("/novnc/"):], "text/plain")
         else:
             self.send_error(HTTPStatus.NOT_FOUND, "Not Found")
 
@@ -173,16 +150,13 @@ class VMConsoleHandler(BaseHTTPRequestHandler):
         if not vm_name:
             self.send_error(HTTPStatus.BAD_REQUEST, "Parameter 'vm' is required")
             return
-
         if vm_name not in self.server.vms:
             self.send_error(HTTPStatus.NOT_FOUND, f"VM '{vm_name}' not found")
             return
 
-        args = self.server.args
-        template_file = os.path.join(args.webroot, "console.html")
+        template_file = self.server.webroot / "console.html"
         try:
-            with open(template_file, "r", encoding="utf-8") as f:
-                raw_html = f.read()
+            raw_html = template_file.read_text(encoding="utf-8")
         except OSError:
             logging.error("Template not found: %s", template_file)
             self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "UI Template missing")
@@ -192,20 +166,14 @@ class VMConsoleHandler(BaseHTTPRequestHandler):
         rendered = Template(raw_html).safe_substitute(
             vm_name=html.escape(vm_name),
             display_name=html.escape(short_name),
-            proxy_port=args.proxy_port,
+            proxy_port=self.server.proxy_port,
         )
         self.send_payload(HTTPStatus.OK, rendered.encode("utf-8"), "text/html; charset=utf-8")
-
-    def handle_status(self, vm_name: str) -> None:
-        target = self.server.vms.get(vm_name) if vm_name else None
-        status = b"RUNNING" if is_port_open(target) else b"STOPPED"
-        self.send_payload(HTTPStatus.OK, status, "text/plain; charset=utf-8", no_cache=True)
 
     def handle_start(self, vm_name: str) -> None:
         if not vm_name:
             self.send_error(HTTPStatus.BAD_REQUEST, "Parameter 'vm' is required")
             return
-
         if vm_name not in self.server.vms:
             self.send_error(HTTPStatus.NOT_FOUND, f"VM '{vm_name}' not found")
             return
@@ -220,66 +188,49 @@ class VMConsoleHandler(BaseHTTPRequestHandler):
         self.send_payload(HTTPStatus.OK, b"OK", "text/plain; charset=utf-8", no_cache=True)
 
     def handle_favicon(self, vm_name: str) -> None:
-        default_icon = os.path.join(ICONS_DIR, "default.png")
         short_name, _, _ = vm_name.partition("@")
-        candidate = os.path.join(ICONS_DIR, f"{short_name}.png") if short_name else default_icon
-
-        if not os.path.isfile(candidate):
-            candidate = default_icon
-
-        if not os.path.isfile(candidate):
+        candidate = ICONS_DIR / f"{short_name}.png" if short_name else ICONS_DIR / "default.png"
+        if not candidate.is_file():
+            candidate = ICONS_DIR / "default.png"
+        if not candidate.is_file():
             self.send_payload(HTTPStatus.NO_CONTENT, b"", "image/png")
             return
-
-        self.send_file(candidate, default_mime="image/png")
-
-    def handle_novnc_static(self, relative_path: str) -> None:
-        novncroot = self.server.args.novncroot
-        target_file = os.path.join(novncroot, relative_path)
-
-        if not is_path_within(target_file, novncroot) or not os.path.isfile(target_file):
-            self.send_error(HTTPStatus.NOT_FOUND, "File not found")
-            return
-
-        self.send_file(target_file, default_mime="text/plain")
+        self.send_safe_file(ICONS_DIR, candidate.name, "image/png")
 
 
 def main() -> None:
-    default_webroot = os.path.dirname(os.path.abspath(__file__))
+    default_webroot = Path(__file__).resolve().parent
 
-    parser = argparse.ArgumentParser(description="vnc2ws-server: Student VM console server")
+    parser = argparse.ArgumentParser(description="vnc2ws-server: VM Console Server")
     parser.add_argument("listen", nargs="?", default="0.0.0.0:8081")
     parser.add_argument("--proxy-port", type=int, default=8080)
-    parser.add_argument(
-        "--config-dir",
-        default="/srv/qemu/config",
-        help="Directory with QEMU *.conf files (default: /srv/qemu/config)",
-    )
-    parser.add_argument("--webroot", default=default_webroot)
+    parser.add_argument("--config-dir", default="/srv/qemu/config")
+    parser.add_argument("--webroot", default=str(default_webroot))
     parser.add_argument("--novncroot", default="/usr/share/novnc")
     args = parser.parse_args()
 
+    vms = load_qemu_configs(Path(args.config_dir))
+
     try:
-        addr = parse_endpoint(args.listen)
+        host, port_str = args.listen.rpartition(":")[::2]
+        addr = (host or "0.0.0.0", int(port_str))
+        server = ThreadingHTTPServer(addr, VMConsoleHandler)
     except Exception as e:
-        logging.critical("Invalid listen address '%s': %s", args.listen, e)
+        logging.critical("Failed to start server on '%s': %s", args.listen, e)
         sys.exit(1)
 
-    vms = load_qemu_configs(args.config_dir)
-
-    args.webroot = os.path.abspath(args.webroot)
-    args.novncroot = os.path.abspath(args.novncroot)
-
-    server = ThreadingHTTPServer(addr, VMConsoleHandler)
-    server.args = args
     server.vms = vms
-    host, port = addr
-    logging.info("Student Console Server started on http://%s:%s", host, port)
+    server.proxy_port = args.proxy_port
+    server.webroot = Path(args.webroot).resolve()
+    server.novncroot = Path(args.novncroot).resolve()
+
+    logging.info("Student Console Server started on http://%s:%s", addr[0], addr[1])
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         logging.info("Shutting down server...")
         server.server_close()
+
 
 if __name__ == "__main__":
     main()

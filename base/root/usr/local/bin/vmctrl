@@ -63,8 +63,10 @@ fi
 # Подготовка аргументов для qemu-system на основе конфигурационного файла
 VM_PARMS=$(envsubst '$USER,$HOME,$VM_NAME' < "$CONF_FILE")
 
-# Определение номера порта VNC с учетом базы 5900 и номера дисплея
-VNC_ADDR="$VM_HOST:$((5900 + $(echo "$VM_PARMS" | grep -Po '(?<=-vnc 0.0.0.0:)[0-9]+' || echo 0)))"
+# Определение номера адреса VNC с учетом базы 5900 и номера дисплея
+VNC_DISPLAY=$(echo "$VM_PARMS" | grep -Po '(?<=-vnc)\s+[^:\s]*:\K[0-9]+' || echo 0)
+VNC_PORT=$(( VNC_DISPLAY < 5900 ? 5900 + VNC_DISPLAY : VNC_DISPLAY ))
+VNC_ADDR="$VM_HOST:$VNC_PORT"
 
 # Поиск подстроки -spice и взятие всего до ближайшего дефиса в круглые скобки
 if [[ "$VM_PARMS" =~ -spice[[:space:]]+([^-]+) ]]; then

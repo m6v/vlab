@@ -4,10 +4,9 @@ After=network.target
 
 [Service]
 Type=simple
-User=nobody
-Group=nogroup
+DynamicUser=yes
 WorkingDirectory=/srv/qemu
-ExecStart=/srv/qemu/vnc2ws-bridge.py 0.0.0.0:8080 --token-source=/srv/qemu/tokens.conf
+ExecStart=/srv/qemu/vnc2ws-bridge.py 0.0.0.0:8080 --config-dir=/srv/qemu/config
 Restart=always
 RestartSec=5
 StandardOutput=journal
