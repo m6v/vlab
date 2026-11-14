@@ -3,12 +3,13 @@ import argparse
 import asyncio
 from functools import partial
 import logging
+from pathlib import Path
+import re
 import socket
 import sys
 from typing import Dict, Optional, Tuple
 from urllib.parse import parse_qs
 
-from websockets.exceptions import ConnectionClosed
 try:
     from websockets.asyncio.server import serve as ws_serve
     LEGACY_WS = False
@@ -16,188 +17,150 @@ except ModuleNotFoundError:
     from websockets import serve as ws_serve
     LEGACY_WS = True
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+class CapitalizeFormatter(logging.Formatter):
+    def format(self, record):
+        original = record.getMessage()
+        record.msg = original[:1].upper() + original[1:]
+        record.args = ()
+        return super().format(record)
 
-TokensMap = Dict[str, Tuple[str, int]]
+handler = logging.StreamHandler()
+handler.setFormatter(CapitalizeFormatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+logging.basicConfig(level=logging.INFO, handlers=[handler])
+
+VncMap = Dict[str, Tuple[str, int]]
+VNC_RE = re.compile(r"(?:^|\s)-vnc(?:\s+|=)(\S+)")
 
 
-def parse_endpoint(addr: str) -> Tuple[str, int]:
-    host, sep, port_str = addr.strip().rpartition(":")
+def parse_endpoint(spec: str, qemu_vnc: bool = False) -> Tuple[str, int]:
+    """Разбирает 'host:port' или QEMU '-vnc host:display[,opts]' в (ip, tcp_port)."""
+    target, _, _ = spec.strip().partition(",")
+    host, sep, port_str = target.rpartition(":")
+    if not sep or not port_str.isdigit():
+        raise ValueError(f"invalid address '{spec}'")
+
+    host = host.strip()
+    if qemu_vnc and (not host or host == "0.0.0.0"):
+        host = "127.0.0.1"
+
     port = int(port_str)
-    if not sep or not host or not (1 <= port <= 65535):
-        raise ValueError(f"некорректный адрес '{addr}'")
+    if qemu_vnc and port < 5900:
+        port += 5900
+
+    if not host or not (1 <= port <= 65535):
+        raise ValueError(f"out of range in '{spec}'")
+
     socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
-    return host.strip(), port
+    return host, port
 
 
-def load_tokens(filepath: str) -> TokensMap:
-    """Загружает и валидирует файл токенов."""
-    tokens: TokensMap = {}
-    line_num = 0
-    try:
-        with open(filepath, "r", encoding="utf-8") as f:
-            for line_num, raw_line in enumerate(f, 1):
-                line = raw_line.strip()
-                if not line or line.startswith("#"):
-                    continue
-
-                token_part, sep, target_part = line.partition(":")
-                token = token_part.strip()
-
-                if not sep or not token or token in tokens:
-                    raise ValueError("некорректный формат, пустой или дублирующийся токен")
-
-                tokens[token] = parse_endpoint(target_part)
-    except Exception as e:
-        line_info = f" (строка {line_num})" if "line_num" in locals() else ""
-        logging.critical("Ошибка загрузки %s%s: %s", filepath, line_info, e)
+def load_qemu_configs(configs_dir: str) -> VncMap:
+    """Сканирует *.conf файлы QEMU и извлекает адреса -vnc."""
+    base_dir = Path(configs_dir)
+    if not base_dir.is_dir():
+        logging.critical("Configs directory not found: %s", configs_dir)
         sys.exit(1)
 
-    logging.info("Загружено токенов: %d", len(tokens))
-    return tokens
+    vms: VncMap = {}
+    for conf in sorted(base_dir.glob("*.conf")):
+        lines = [
+            l.strip().rstrip("\\")
+            for l in conf.read_text(encoding="utf-8").splitlines()
+            if not l.lstrip().startswith("#")
+        ]
+        match = VNC_RE.search(" ".join(lines))
+        if match:
+            try:
+                host, port = parse_endpoint(match.group(1), qemu_vnc=True)
+                vms[conf.stem] = (host, port)
+                logging.info("Loaded %s VNC endpoint (%s:%s)", conf.stem, host, port)
+            except Exception as e:
+                logging.error("Failed to parse %s: %s", conf.name, e)
+    return vms
 
 
-def extract_token(websocket, path: Optional[str] = None) -> Optional[str]:
-    """Извлекает токен из URI запроса."""
-    if LEGACY_WS:
-        current_path = websocket.path if "?" in websocket.path else (path or "")
-    else:
-        current_path = getattr(websocket.request, "uri", websocket.request.path or "")
-
-    _, _, query_str = current_path.partition("?")
-    params = parse_qs(query_str)
-    token_list = params.get("token") or params.get("path")
-    return token_list[0].strip() if token_list else None
-
-
-async def ws_handler(websocket, path: Optional[str] = None, *, tokens_map: TokensMap):
+async def ws_handler(websocket, path: Optional[str] = None, *, vnc_map: VncMap):
     """Асинхронный воркер WebSocket-соединения."""
-    token = extract_token(websocket, path)
-    if not token:
-        await websocket.close(1008, "Missing token")
+    uri = (websocket.path if "?" in websocket.path else (path or "")) if LEGACY_WS else getattr(websocket.request, "uri", websocket.request.path or "")
+    params = parse_qs(uri.partition("?")[2])
+    tokens = params.get("token") or params.get("path")
+    token = tokens[0].strip() if tokens else None
+
+    target = vnc_map.get(token) if token else None
+    if not target:
+        await websocket.close(1008, "Unknown or missing token")
         return
 
-    vnc_target = tokens_map.get(token)
-    if not vnc_target:
-        logging.warning("[%s] Попытка подключения с незарегистрированным токеном", token)
-        await websocket.close(1008, "Token not registered")
-        return
-
-    host, port = vnc_target
-    logging.info("[%s] Подключение к VNC бэкенду %s:%s", token, host, port)
-
+    host, port = target
     try:
-        reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(host, port), timeout=5.0
-        )
+        reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=5.0)
         sock = writer.get_extra_info("socket")
-        if sock is not None:
+        if sock:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
             sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        logging.info("[%s] Мост скоммутирован", token)
     except Exception as e:
-        logging.error("[%s] Ошибка TCP подключения к VNC: %s", token, e)
-        await websocket.close(1011, "VNC backend connection failed")
+        logging.error("[%s] VNC connection failed (%s:%s): %s", token, host, port, e)
+        await websocket.close(1011, "VNC backend unavailable")
         return
 
-    async def pipeline_browser_to_vm():
-        try:
-            async for message in websocket:
-                if isinstance(message, bytes):
-                    if message:
-                        writer.write(message)
-                        await writer.drain()
-                else:
-                    logging.debug("[%s] Игнорирование текстового сообщения от клиента", token)
-        except ConnectionClosed:
-            pass  # Штатное закрытие
-        except Exception as e:
-            logging.error("[%s] Ошибка при чтении из WebSocket: %s", token, e)
+    logging.info("Connected to %s (%s:%s)", token, host, port)
 
-    async def pipeline_vm_to_browser():
-        try:
-            while True:
-                data = await reader.read(65536)
-                if not data:
-                    break
-                await asyncio.wait_for(websocket.send(data), timeout=10.0)
-        except ConnectionClosed:
-            pass  # Штатное закрытие
-        except Exception as e:
-            # Если это не закрытие соединения, логируем как ошибку
-            logging.error("[%s] Ошибка при записи в WebSocket: %s", token, e)
+    async def browser_to_vm():
+        async for msg in websocket:
+            if isinstance(msg, bytes) and msg:
+                writer.write(msg)
+                await writer.drain()
 
-    tasks = [
-        asyncio.create_task(pipeline_browser_to_vm()),
-        asyncio.create_task(pipeline_vm_to_browser()),
-    ]
+    async def vm_to_browser():
+        while True:
+            data = await reader.read(65536)
+            if not data:
+                break
+            await asyncio.wait_for(websocket.send(data), timeout=10.0)
 
+    tasks = [asyncio.create_task(browser_to_vm()), asyncio.create_task(vm_to_browser())]
     try:
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        for task in pending:
-            task.cancel()
+        _, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        for t in pending:
+            t.cancel()
         await asyncio.gather(*pending, return_exceptions=True)
-
-        for task in done:
-            if not task.cancelled() and task.exception():
-                logging.debug("[%s] Поток завершен с ошибкой: %r", token, task.exception())
-    except Exception as e:
-        logging.debug("[%s] Исключение в конвейере данных: %s", token, e)
     finally:
-        try:
-            writer.close()
-            if hasattr(writer, "wait_closed"):
-                await writer.wait_closed()
-        except Exception:
-            pass
-        try:
-            await websocket.close()
-        except Exception:
-            pass
-        logging.info("[%s] Сессия закрыта, ресурсы освобождены", token)
+        writer.close()
+        if hasattr(writer, "wait_closed"):
+            await writer.wait_closed()
+        await websocket.close()
+        logging.info("Session with %s closed", token)
 
 
-async def main(listen_host: str, listen_port: int, tokens_map: TokensMap):
+async def main(host: str, port: int, vnc_map: VncMap):
     logging.info(
-        "Запуск в режиме %s",
+        "Run in %s mode",
         "legacy (websockets < 13)" if LEGACY_WS else "modern (websockets >= 13)",
     )
-    handler = partial(ws_handler, tokens_map=tokens_map)
-
+    handler = partial(ws_handler, vnc_map=vnc_map)
     async with ws_serve(
-        handler,
-        listen_host,
-        listen_port,
+        handler, host, port,
         subprotocols=["binary"],
         ping_interval=15,
         ping_timeout=10,
-        max_size=5 * 1024 * 1024,
+        max_size=None,
         reuse_address=True,
     ):
-        logging.info("VNC-to-WebSocket Bridge запущен на %s:%s", listen_host, listen_port)
         await asyncio.Event().wait()
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="vnc2ws-bridge: WebSocket VNC proxy")
-    parser.add_argument(
-        "listen_target",
-        nargs="?",
-        default="0.0.0.0:8080",
-        help="Адрес и порт прослушивания (по умолчанию 0.0.0.0:8080)",
-    )
-    parser.add_argument("--token-source", default="/srv/qemu/tokens.conf")
+    parser.add_argument("listen", nargs="?", default="0.0.0.0:8080")
+    parser.add_argument("--config-dir", default="/srv/qemu/config")
     args = parser.parse_args()
 
+    vnc_map = load_qemu_configs(args.config_dir)
     try:
-        host, port = parse_endpoint(args.listen_target)
-    except Exception as e:
-        logging.critical("Некорректный адрес прослушивания '%s': %s", args.listen_target, e)
-        sys.exit(1)
-
-    tokens_map = load_tokens(args.token_source)
-
-    try:
-        asyncio.run(main(host, port, tokens_map))
+        host, port = args.listen.rpartition(":")[::2]
+        asyncio.run(main(host or "0.0.0.0", int(port), vnc_map))
     except KeyboardInterrupt:
-        logging.info("Остановка сервера по сигналу прерывания")
+        pass
+    except Exception as e:
+        logging.critical("Failed to start bridge on '%s': %s", args.listen, e)
+        sys.exit(1)

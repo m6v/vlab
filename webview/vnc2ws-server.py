@@ -14,11 +14,13 @@ from string import Template
 from typing import Dict, Optional, Tuple
 from urllib.parse import parse_qs, urlsplit
 
-VM_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
-TOKEN_PATTERN = re.compile(r"^([a-zA-Z0-9_-]+):\s*([0-9.]+):(\d+)")
+VM_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_.-]+(?:@[a-zA-Z0-9_.-]+)?$")
+VNC_ARG_RE = re.compile(r"(?:^|\s)-vnc(?:\s+|=)(\S+)")
 
 ICONS_DIR = "/usr/share/pixmaps"
 VMCTRL_BIN = "/usr/local/bin/vmctrl"
+
+VncMap = Dict[str, Tuple[str, int]]
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,11 +28,9 @@ logging.basicConfig(
     datefmt="%Y/%m/%d %H:%M:%S",
 )
 
-TokensMap = Dict[str, Tuple[str, int]]
-
 
 def parse_endpoint(addr: str) -> Tuple[str, int]:
-    """Разбирает и валидирует адрес 'host:port' (IPv4 или DNS) через ОС."""
+    """Разбирает и валидирует адрес 'host:port' для прослушивания."""
     host, sep, port_str = addr.strip().rpartition(":")
     port = int(port_str)
     if not sep or not host or not (1 <= port <= 65535):
@@ -39,30 +39,62 @@ def parse_endpoint(addr: str) -> Tuple[str, int]:
     return host.strip(), port
 
 
-def load_tokens(filepath: str) -> TokensMap:
-    """Загружает и валидирует статический файл токенов при старте."""
-    tokens: TokensMap = {}
-    try:
-        with open(filepath, "r", encoding="utf-8") as f:
-            for line_num, raw_line in enumerate(f, 1):
-                line = raw_line.strip()
-                if not line or line.startswith("#"):
-                    continue
+def parse_vnc_spec(spec: str) -> Tuple[str, int]:
+    """Преобразует аргумент QEMU '-vnc host:display[,opts]' в (ip, tcp_port)."""
+    target, _, _ = spec.strip().partition(",")
+    host_part, sep, disp_part = target.rpartition(":")
+    if not sep or not disp_part.isdigit():
+        raise ValueError(f"invalid -vnc specification '{spec}'")
 
-                token_part, sep, target_part = line.partition(":")
-                token = token_part.strip()
+    host = host_part.strip()
+    if not host or host == "0.0.0.0":
+        host = "127.0.0.1"
 
-                if not sep or not token or token in tokens:
-                    raise ValueError("invalid token")
+    disp = int(disp_part)
+    port = disp + 5900 if disp < 5900 else disp
+    if not (1 <= port <= 65535):
+        raise ValueError(f"port out of range in '{spec}'")
 
-                tokens[token] = parse_endpoint(target_part)
-    except Exception as e:
-        line_info = f" (string {line_num})" if "line_num" in locals() else ""
-        logging.critical("Failed to load %s%s: %s", filepath, line_info, e)
+    socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
+    return host, port
+
+
+def load_qemu_configs(configs_dir: str) -> VncMap:
+    """Сканирует каталог *.conf файлов QEMU и извлекает параметры -vnc."""
+    if not os.path.isdir(configs_dir):
+        logging.critical("Configs directory not found: %s", configs_dir)
         sys.exit(1)
 
-    logging.info("Loaded tokens: %d", len(tokens))
-    return tokens
+    vms: VncMap = {}
+    for filename in sorted(os.listdir(configs_dir)):
+        if not filename.endswith(".conf"):
+            continue
+
+        vm_name = filename[:-5]
+        conf_path = os.path.join(configs_dir, filename)
+        if not os.path.isfile(conf_path):
+            continue
+
+        try:
+            with open(conf_path, "r", encoding="utf-8") as f:
+                parts = []
+                for raw_line in f:
+                    line = raw_line.split("#", 1).pop(0).rstrip(" \\\r\n\t").strip()
+                    if line:
+                        parts.append(line)
+
+            full_cmd = " ".join(parts)
+            match = VNC_ARG_RE.search(full_cmd)
+            if not match:
+                logging.warning("Skipping %s: '-vnc' parameter not found", filename)
+                continue
+
+            vms[vm_name] = parse_vnc_spec(match.group(1))
+        except Exception as exc:
+            logging.error("Failed to parse %s: %s", filename, exc)
+
+    logging.info("Loaded VM configs: %d", len(vms))
+    return vms
 
 
 def is_port_open(target: Optional[Tuple[str, int]], timeout: float = 0.2) -> bool:
@@ -84,7 +116,7 @@ def is_path_within(target_path: str, base_dir: str) -> bool:
 
 
 class VMConsoleHandler(BaseHTTPRequestHandler):
-    """Обработчик HTTP-запросов веб-консоли виртуальной машины (режим обучаемого)."""
+    """Обработчик HTTP-запросов веб-консоли виртуальной машины."""
 
     def log_message(self, format: str, *args) -> None:
         logging.debug(format, *args)
@@ -117,7 +149,8 @@ class VMConsoleHandler(BaseHTTPRequestHandler):
         parsed_url = urlsplit(self.path)
         route = parsed_url.path
         params = parse_qs(parsed_url.query)
-        vm_name = params.get("vm", [""])[0].strip()
+        vm_list = params.get("vm")
+        vm_name = vm_list.pop(0).strip() if vm_list else ""
 
         if vm_name and not VM_NAME_PATTERN.match(vm_name):
             self.send_error(HTTPStatus.BAD_REQUEST, "Invalid VM name format")
@@ -141,8 +174,8 @@ class VMConsoleHandler(BaseHTTPRequestHandler):
             self.send_error(HTTPStatus.BAD_REQUEST, "Parameter 'vm' is required")
             return
 
-        if vm_name not in self.server.tokens:
-            self.send_error(HTTPStatus.NOT_FOUND, f"VM '{vm_name}' not registered")
+        if vm_name not in self.server.vms:
+            self.send_error(HTTPStatus.NOT_FOUND, f"VM '{vm_name}' not found")
             return
 
         args = self.server.args
@@ -155,14 +188,16 @@ class VMConsoleHandler(BaseHTTPRequestHandler):
             self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "UI Template missing")
             return
 
+        short_name, _, _ = vm_name.partition("@")
         rendered = Template(raw_html).safe_substitute(
             vm_name=html.escape(vm_name),
+            display_name=html.escape(short_name),
             proxy_port=args.proxy_port,
         )
         self.send_payload(HTTPStatus.OK, rendered.encode("utf-8"), "text/html; charset=utf-8")
 
     def handle_status(self, vm_name: str) -> None:
-        target = self.server.tokens.get(vm_name) if vm_name else None
+        target = self.server.vms.get(vm_name) if vm_name else None
         status = b"RUNNING" if is_port_open(target) else b"STOPPED"
         self.send_payload(HTTPStatus.OK, status, "text/plain; charset=utf-8", no_cache=True)
 
@@ -171,8 +206,8 @@ class VMConsoleHandler(BaseHTTPRequestHandler):
             self.send_error(HTTPStatus.BAD_REQUEST, "Parameter 'vm' is required")
             return
 
-        if vm_name not in self.server.tokens:
-            self.send_error(HTTPStatus.NOT_FOUND, f"VM '{vm_name}' not registered")
+        if vm_name not in self.server.vms:
+            self.send_error(HTTPStatus.NOT_FOUND, f"VM '{vm_name}' not found")
             return
 
         logging.info("API: Starting VM '%s'", vm_name)
@@ -186,7 +221,8 @@ class VMConsoleHandler(BaseHTTPRequestHandler):
 
     def handle_favicon(self, vm_name: str) -> None:
         default_icon = os.path.join(ICONS_DIR, "default.png")
-        candidate = os.path.join(ICONS_DIR, f"{vm_name}.png") if vm_name else default_icon
+        short_name, _, _ = vm_name.partition("@")
+        candidate = os.path.join(ICONS_DIR, f"{short_name}.png") if short_name else default_icon
 
         if not os.path.isfile(candidate):
             candidate = default_icon
@@ -211,10 +247,14 @@ class VMConsoleHandler(BaseHTTPRequestHandler):
 def main() -> None:
     default_webroot = os.path.dirname(os.path.abspath(__file__))
 
-    parser = argparse.ArgumentParser(description="vnc2ws-server: Virtual Machines Console Server")
+    parser = argparse.ArgumentParser(description="vnc2ws-server: Student VM console server")
     parser.add_argument("listen", nargs="?", default="0.0.0.0:8081")
     parser.add_argument("--proxy-port", type=int, default=8080)
-    parser.add_argument("--token-source", default="/srv/qemu/tokens.conf")
+    parser.add_argument(
+        "--config-dir",
+        default="/srv/qemu/config",
+        help="Directory with QEMU *.conf files (default: /srv/qemu/config)",
+    )
     parser.add_argument("--webroot", default=default_webroot)
     parser.add_argument("--novncroot", default="/usr/share/novnc")
     args = parser.parse_args()
@@ -225,23 +265,21 @@ def main() -> None:
         logging.critical("Invalid listen address '%s': %s", args.listen, e)
         sys.exit(1)
 
-    tokens = load_tokens(args.token_source)
+    vms = load_qemu_configs(args.config_dir)
 
     args.webroot = os.path.abspath(args.webroot)
     args.novncroot = os.path.abspath(args.novncroot)
 
     server = ThreadingHTTPServer(addr, VMConsoleHandler)
     server.args = args
-    server.tokens = tokens
-
+    server.vms = vms
     host, port = addr
-    logging.info("Virtual Machines Console Server started on http://%s:%s", host, port)
+    logging.info("Student Console Server started on http://%s:%s", host, port)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         logging.info("Shutting down server...")
         server.server_close()
-
 
 if __name__ == "__main__":
     main()
