@@ -182,7 +182,7 @@ class VMConsoleHandler(BaseHTTPRequestHandler):
 
         logging.info("API: Starting VM '%s'", vm_name)
         subprocess.Popen(
-            [VMCTRL_BIN, "start", vm_name],
+            [VMCTRL_BIN, "run", vm_name],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,

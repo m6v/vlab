@@ -92,3 +92,13 @@ chmod 0644 /etc/qemu/bridge.conf
     tokens.conf # Токены виртуальных машин для подключения по VNC
 /usr/local/bin/vmctrl # Программа управления виртуальными машинами
 ```
+
+# Установка
+Установку выполняют в следующем порядке:
+- копируют в каталог /srv/qemu/images образы дисков виртуальных машин rubicon.qcow, arm-o.qcow2, arm-ipc.qcow2, ipc-master.qcow2, ips-slave.qcow2 и установочный образ ОС Astra Linux SE;
+- копируют дистрибутивы средств защиты информации в каталог /srv/repo/
+- устанавливают пакет virt-viewer без лишних зависимостей, в противном случае он тянет за собой libvirt и др.
+```
+apt install virt-viewer --no-install-recommends --no-install-suggests
+```
+- устанавливают пакет `vlab-base_*.deb`

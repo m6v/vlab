@@ -3,7 +3,7 @@
 CONFIG_DIR="/srv/qemu/config"
 SELF_NAME=$(basename "${BASH_SOURCE[0]}")
 
-# Перенаправление stderr скрипта в logger
+# Перенаправление stderr в logger
 exec 2> >(logger -t $SELF_NAME -p user.err)
 
 # Определение имени пользователя, сидящего за монитором (seat0)
@@ -15,7 +15,7 @@ if [ -z "$SEAT_USER" ]; then
     exit 1
 fi
 
-# Переключение на пользователя, только если скрипт запущен не под ним (защита от бесконечной рекурсии)
+# Переключение на пользователя, только в случае, если скрипт запущен не под ним (защита от бесконечной рекурсии)
 if [ "$(whoami)" != "$SEAT_USER" ]; then
     export USER="$SEAT_USER"
     export HOME=$(getent passwd "$USER" | cut -d ':' -f 6)
@@ -39,7 +39,7 @@ fi
 # Проверка наличия по крайней мере еще одного аргумента (имени виртуальной машины)
 if [ -z "$2" ]; then
     echo "Ошибка: Не указано имя виртуальной машины." | tee /dev/stderr
-    echo "Использование: $SELF_NAME <list|info|start|stop|resume|reset|powerdown|quit|kill> <имя_машины> или $SELF_NAME list"
+    echo "Использование: $SELF_NAME <list|info|run|stop|resume|reset|powerdown|quit|kill> <имя_машины> или $SELF_NAME list"
     echo "Синтаксис команд управления см. на https://www.qemu.org/docs/master/system/monitor.html"
     exit 1
 fi
@@ -91,7 +91,7 @@ else
     exit 1
 fi
 
-if [ "$ACTION" = "start" ]; then
+if [ "$ACTION" = "run" ]; then
     # Запуск VM_NAME, если не запущена
     if ! pgrep -f "qemu-system-x86_64.*-name ${VM_NAME}\b" > /dev/null; then
         eval "qemu-system-x86_64 $(echo "$VM_PARMS" | paste -sd ' ' -)"
@@ -115,6 +115,7 @@ fi
 # Синонимы команд
 [ "$ACTION" = "pause" ] && ACTION="stop"
 [ "$ACTION" = "resume" ] && ACTION="cont"
+[ "$ACTION" = "start" ] && ACTION="cont"
 [ "$ACTION" = "reset" ] && ACTION="system_reset"
 [ "$ACTION" = "powerdown" ] && ACTION="system_powerdown"
 
@@ -159,8 +160,8 @@ case "$ACTION" in
         ;;
 
     *)
-        # Аргументы со второго по предпоследний (первый это $ACTION, последний это $VM_NAME, который в команде не используется)
-        # Синтаксис должен соответствовать протоколу HMP (Human Monitor Interface) [https://www.qemu.org/docs/master/system/monitor.html]
+        # Аргументы со второго по предпоследний (первый это $ACTION, последний - $VM_NAME, который в команде не используется)
+        # по синтаксису должны соответствовать протоколу HMP (Human Monitor Interface) [https://www.qemu.org/docs/master/system/monitor.html]
         EXTRA_ARGS="${@:2:$#-2}"
         echo "$ACTION $EXTRA_ARGS" | socat - "$VM_SOCK" | grep -Ev "^\(qemu\)|^QEMU"
         ;;
