@@ -19,7 +19,7 @@ VM_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_.-]+(?:@[a-zA-Z0-9_.-]+)?$")
 VNC_RE = re.compile(r"(?:^|\s)-vnc(?:\s+|=)(\S+)")
 
 ICONS_DIR = Path("/usr/share/pixmaps")
-VMCTRL_BIN = "/usr/local/bin/vmctrl"
+VMCTL_BIN = "/usr/local/bin/vmctl"
 
 VncMap = Dict[str, Tuple[str, int]]
 
@@ -182,7 +182,7 @@ class VMConsoleHandler(BaseHTTPRequestHandler):
 
         logging.info("API: Starting VM '%s'", vm_name)
         subprocess.Popen(
-            [VMCTRL_BIN, "run", vm_name],
+            [VMCTL_BIN, "run", vm_name],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,

@@ -1,4 +1,4 @@
-_vmctrl_completion() {
+_vmctl_completion() {
     local cur prev opts
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
@@ -64,4 +64,4 @@ _vmctrl_completion() {
 }
 
 # Привязка автодополнения к вызовам утилиты
-complete -F _vmctrl_completion vmctrl
+complete -F _vmctl_completion vmctl
