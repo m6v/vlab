@@ -137,8 +137,9 @@ class VMConsoleHandler(BaseHTTPRequestHandler):
             target = self.server.vms.get(vm_name) if vm_name else None
             status = b"RUNNING" if is_port_open(target) else b"STOPPED"
             self.send_payload(HTTPStatus.OK, status, "text/plain; charset=utf-8", no_cache=True)
-        elif route == "/start":
-            self.handle_start(vm_name)
+        elif route == "/control":
+            action = params.get("action", [""])[0].strip()
+            self.handle_control(action, vm_name)
         elif route == "/favicon.ico":
             self.handle_favicon(vm_name)
         elif route.startswith("/novnc/"):
@@ -149,6 +150,7 @@ class VMConsoleHandler(BaseHTTPRequestHandler):
             self.send_error(HTTPStatus.NOT_FOUND, "Not Found")
 
     def handle_console(self, vm_name: str) -> None:
+        """Отдает HTML-страницу веб-консоли noVNC, подставляя параметры выбранной ВМ."""
         if not vm_name:
             self.send_error(HTTPStatus.BAD_REQUEST, "Parameter 'vm' is required")
             return
@@ -156,7 +158,7 @@ class VMConsoleHandler(BaseHTTPRequestHandler):
             self.send_error(HTTPStatus.NOT_FOUND, f"VM '{vm_name}' not found")
             return
 
-        template_file = self.server.webroot / "console.html"
+        template_file = self.server.webroot.joinpath("console.html")
         try:
             raw_html = template_file.read_text(encoding="utf-8")
         except OSError:
@@ -172,17 +174,18 @@ class VMConsoleHandler(BaseHTTPRequestHandler):
         )
         self.send_payload(HTTPStatus.OK, rendered.encode("utf-8"), "text/html; charset=utf-8")
 
-    def handle_start(self, vm_name: str) -> None:
-        if not vm_name:
-            self.send_error(HTTPStatus.BAD_REQUEST, "Parameter 'vm' is required")
+    def handle_control(self, action: str, vm_name: str) -> None:
+        """Передает команду управления (run, stop, resume и др.) в утилиту vmctl."""
+        if not action or not vm_name:
+            self.send_error(HTTPStatus.BAD_REQUEST, "Parameters 'action' and 'vm' are required")
             return
         if vm_name not in self.server.vms:
             self.send_error(HTTPStatus.NOT_FOUND, f"VM '{vm_name}' not found")
             return
 
-        logging.info("API: Starting VM '%s'", vm_name)
+        logging.info("API: Executing '%s' on VM '%s'", action, vm_name)
         subprocess.Popen(
-            [VMCTL_BIN, "run", vm_name],
+            [VMCTL_BIN, action, vm_name],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,

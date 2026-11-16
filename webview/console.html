@@ -98,7 +98,7 @@
                         `/favicon.ico?vm=${encodeURIComponent(this.vmName)}&v=${Date.now()}`;
                 }
 
-                this.btn.addEventListener('click', () => this.launchVM());
+                this.btn.addEventListener('click', () => this.runVM());
                 window.addEventListener('pagehide', () => this.disconnect());
 
                 this.checkStatus();
@@ -173,13 +173,13 @@
                 });
             },
 
-            async launchVM() {
+            async runVM() {
                 if (this.btn.disabled) return;
                 this.setOfflineState(true);
                 this.stopPolling();
 
                 try {
-                    const res = await fetch(`/start?vm=${encodeURIComponent(this.vmName)}`, { cache: 'no-store' });
+                    const res = await fetch(`/control?action=run&vm=${encodeURIComponent(this.vmName)}`, { cache: 'no-store' });
                     this.checkStatus(res.ok ? 500 : 2500);
                 } catch {
                     this.setOfflineState(false);

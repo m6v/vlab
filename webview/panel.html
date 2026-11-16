@@ -115,13 +115,12 @@
     </style>
 </head>
 <body>
-    <header>Панель инструктора УТК-СЗИ</header>
+    <header>Панель управления виртуальными машинами УТК-СЗИ</header>
 
     <aside id="pve-tree"></aside>
 
     <main id="content">
         <div class="placeholder">
-            <h2>Консоль не выбрана</h2>
             <p>Выберите виртуальную машину из списка слева для подключения</p>
         </div>
         <iframe id="vnc-frame"></iframe>
@@ -177,7 +176,7 @@
                     const summary = document.createElement('summary');
                     summary.title = `${node.host}:${node.consolePort}`;
                     const label = document.createElement('span');
-                    label.textContent = node.online ? node.label : `${node.label} (offline)`;
+                    label.textContent = node.online ? node.label : `${node.label}`;
                     summary.append(label);
                     summary.addEventListener('click', () => details.dataset.toggled = '1');
 
