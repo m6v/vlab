@@ -112,32 +112,162 @@
         }
 
         .placeholder h2 { margin: 0 0 10px; font-size: 1.5rem; font-weight: 400; }
+
+        /* Контекстное меню */
+        #vm-menu {
+            position: fixed;
+            z-index: 100;
+            margin: 0;
+            padding: 4px 0;
+            list-style: none;
+            min-width: 210px;
+            background: var(--bg-main);
+            border: 1px solid var(--border);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+            display: none;
+            user-select: none;
+        }
+
+        #vm-menu.open { display: block; }
+
+        #vm-menu li[data-action] span {
+            width: 1.2rem;
+            text-align: center;
+            font-size: 1rem;
+            color: var(--text-muted);
+        }
+
+        #vm-menu li[data-action]:hover span {
+            color: var(--sidebar-active-text);
+        }
+
+        #vm-menu li[data-action] {
+            padding: 6px 14px;
+            font-size: 0.9rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        #vm-menu li[data-action]:hover {
+            background: var(--sidebar-hover);
+            color: var(--sidebar-active-text);
+        }
+
+        #vm-menu li.disabled {
+            opacity: 0.35;
+            pointer-events: none;
+        }
+
+        #vm-menu li.separator {
+            height: 1px;
+            margin: 4px 0;
+            background: var(--border);
+        }
     </style>
 </head>
 <body>
-    <header>Панель управления виртуальными машинами УТК-СЗИ</header>
+    <header>Панель управления виртуальными машинами KVM/QEMU</header>
 
     <aside id="pve-tree"></aside>
 
     <main id="content">
         <div class="placeholder">
+            <h2>Консоль не выбрана</h2>
             <p>Выберите виртуальную машину из списка слева для подключения</p>
         </div>
         <iframe id="vnc-frame"></iframe>
     </main>
 
+    <menu id="vm-menu">
+        <li data-action="run"><span>▸</span> Запустить</li>
+        <li data-action="stop"><span>⏸</span> Пауза</li>
+        <li data-action="resume"><span>⏯</span> Возобновить</li>
+        <li class="separator"></li>
+        <li data-action="reset"><span>↻</span> Перезагрузить</li>
+        <li data-action="powerdown"><span>⏻</span> Завершить работу</li>
+        <li data-action="quit"><span>⏹</span> Принудительно выключить</li>
+    </menu>
+
     <script>
         const WebPanel = {
             selectedVmKey: null,
             lastStructureHash: '',
+            pollTimer: null,
+            contextTarget: null,
 
             resolveHost: host => ['127.0.0.1', 'localhost'].includes(host) ? location.hostname : host,
 
             async init() {
+                this.initContextMenu();
                 await this.refreshNodes();
             },
 
+            initContextMenu() {
+                const menu = document.getElementById('vm-menu');
+                const close = () => menu.classList.remove('open');
+
+                document.addEventListener('click', close);
+                document.addEventListener('contextmenu', e => {
+                    if (!e.target.closest('.vm-item')) close();
+                });
+                document.addEventListener('keydown', e => {
+                    if (e.key === 'Escape') close();
+                });
+                document.getElementById('pve-tree').addEventListener('scroll', close);
+                window.addEventListener('blur', close);
+                window.addEventListener('resize', close);
+
+                menu.addEventListener('click', async e => {
+                    const item = e.target.closest('li[data-action]');
+                    if (!item || item.classList.contains('disabled') || !this.contextTarget) return;
+
+                    const { host, consolePort, vmName } = this.contextTarget;
+                    const action = item.dataset.action;
+                    close();
+
+                    await this.controlVM(host, consolePort, vmName, action);
+                });
+            },
+
+            openContextMenu(e, node, vmName, isOnline) {
+                e.preventDefault();
+                this.contextTarget = { host: node.host, consolePort: node.consolePort, vmName };
+
+                const menu = document.getElementById('vm-menu');
+                menu.querySelectorAll('li[data-action]').forEach(li => {
+                    const isRun = li.dataset.action === 'run';
+                    li.classList.toggle('disabled', isOnline ? isRun : !isRun);
+                });
+
+                menu.classList.add('open');
+
+                const x = Math.min(e.clientX, window.innerWidth - menu.offsetWidth - 6);
+                const y = Math.min(e.clientY, window.innerHeight - menu.offsetHeight - 6);
+                menu.style.left = `${x}px`;
+                menu.style.top = `${y}px`;
+            },
+
+            async controlVM(host, consolePort, vmName, action) {
+                try {
+                    const params = new URLSearchParams({ action, vm: vmName });
+                    const res = await fetch(`http://${this.resolveHost(host)}:${consolePort}/control?${params}`, {
+                        cache: 'no-store'
+                    });
+                    if (!res.ok) throw new Error(await res.text());
+
+                    // Обновляем список статусов сразу и повторно через 700 мс (на случай задержки закрытия/открытия сокета QEMU)
+                    clearTimeout(this.pollTimer);
+                    await this.refreshNodes();
+                    setTimeout(() => this.refreshNodes(), 700);
+                } catch (e) {
+                    console.error(`Ошибка команды ${action} для ${vmName}:`, e);
+                }
+            },
+
             async refreshNodes() {
+                clearTimeout(this.pollTimer);
                 try {
                     const res = await fetch('/api/nodes', { cache: 'no-store' });
                     if (!res.ok) return;
@@ -152,10 +282,9 @@
                 } catch (e) {
                     console.error("Ошибка опроса рабочих мест:", e);
                 } finally {
-                    setTimeout(() => this.refreshNodes(), 3000);
+                    this.pollTimer = setTimeout(() => this.refreshNodes(), 3000);
                 }
             },
-
             buildTree(nodes) {
                 const tree = document.getElementById('pve-tree');
                 const userState = Object.fromEntries(
@@ -198,6 +327,11 @@
                             const params = new URLSearchParams({ vm: vm.name });
                             document.getElementById('vnc-frame').src = `http://${this.resolveHost(node.host)}:${node.consolePort}/?${params}`;
                         });
+
+                        li.addEventListener('contextmenu', e => {
+                            this.openContextMenu(e, node, vm.name, li.classList.contains('online'));
+                        });
+
                         return li;
                     }));
 

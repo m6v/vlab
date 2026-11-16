@@ -179,10 +179,12 @@ class VMConsoleHandler(BaseHTTPRequestHandler):
         if not action or not vm_name:
             self.send_error(HTTPStatus.BAD_REQUEST, "Parameters 'action' and 'vm' are required")
             return
+        # Проверка, что vm_name существует в конфигурации узла
         if vm_name not in self.server.vms:
             self.send_error(HTTPStatus.NOT_FOUND, f"VM '{vm_name}' not found")
             return
 
+        # Запуск vmctl в отдельной сессии без ожидания завершения, чтобы не блокировать HTTP-сервер
         logging.info("API: Executing '%s' on VM '%s'", action, vm_name)
         subprocess.Popen(
             [VMCTL_BIN, action, vm_name],
