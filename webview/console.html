@@ -11,70 +11,58 @@
             width: 100%;
             height: 100%;
         }
+
         #offline-ui {
             display: none;
             position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: transparent;
+            inset: 0;
             z-index: 10;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 24px;
         }
-        #pve_start_button.disabled {
+
+        #offline-ui.visible {
+            display: flex;
+        }
+
+        #start_info {
+            color: #fff;
+            text-align: center;
+            font-size: 20px;
+            line-height: 1.4;
+        }
+
+        #start_button {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 32px;
+            font: inherit;
+            font-size: 20px;
+            color: #fff;
+            background: #4c4c4c;
+            border: 1px solid #2f2f2f;
+            border-bottom-width: 2px;
+            outline: 8px solid #4c4c4c;
+            box-shadow: 6px 6px 0 8px rgba(0, 0, 0, 0.5);
+            cursor: pointer;
+        }
+
+        #start_button:active {
+            border-bottom-width: 1px;
+            transform: translateY(1px);
+        }
+
+		#start_button:hover {
+			background: #666;
+		}
+
+        #start_button:disabled {
             opacity: 0.6;
             cursor: not-allowed;
             pointer-events: none;
-        }
-
-        div:not(#noVNC_container) {
-            border-radius: unset !important;
-        }
-        #pve_start_dlg {
-            transition: 0.2s ease-in-out;
-            transform: scale(0, 0);
-            visibility: hidden;
-            opacity: 0;
-        }
-        #pve_start_dlg.noVNC_open {
-            transform: scale(1, 1);
-            visibility: visible;
-            opacity: 1;
-        }
-        #pve_start_info {
-            color: white;
-            text-align: center;
-            font-size: 20px;
-            padding: 6px;
-            line-height: 1.4;
-        }
-        #pve_start_button {
-            cursor: pointer;
-            padding: 6px;
-            color: white;
-            background: #4c4c4c;
-            text-align: center;
-            font-size: 20px;
-            box-shadow: 4px 4px 0px rgba(0, 0, 0, 0.5);
-        }
-        #pve_start_button div {
-            margin: 2px;
-            padding: 5px 30px;
-            border: 1px solid #2f2f2f;
-            border-bottom-width: 2px;
-            background: #4c4c4c;
-            vertical-align: middle;
-        }
-        #pve_start_button div:active {
-            border-bottom-width: 1px;
-            margin-top: 3px;
-        }
-        :root:not(.noVNC_touch) #pve_start_button div:hover {
-            background: rgba(255, 255, 255, 0.2);
-        }
-        #pve_start_button img {
-            vertical-align: bottom;
-            padding: 0 5px 2px 0;
         }
     </style>
 </head>
@@ -82,13 +70,12 @@
 
     <div id="noVNC_container"></div>
 
-    <div id="offline-ui" class="noVNC_center">
-        <div id="pve_start_dlg" class="noVNC_open">
-            <div id="pve_start_info">Виртуальная машина ${vm_name}<br>не запущена</div>
-            <div id="pve_start_button" onclick="VMConsole.launchVM()">
-                <div><img alt="" src="/novnc/app/images/power.svg"><span id="startBtnText">Запустить</span></div>
-            </div>
-        </div>
+    <div id="offline-ui">
+        <div id="start_info">Виртуальная машина ${vm_name} не запущена</div>
+        <button id="start_button" type="button">
+            <img alt="" src="/novnc/app/images/power.svg">
+            <span>Запустить</span>
+        </button>
     </div>
 
     <script type="module">
@@ -102,134 +89,106 @@
             isConnecting: false,
 
             init() {
-                this.setupFavicon();
-                this.checkInitialStatus();
-            },
+                this.ui = document.getElementById('offline-ui');
+                this.btn = document.getElementById('start_button');
+                this.btnText = this.btn.querySelector('span');
 
-            setupFavicon() {
-                const favicon = document.getElementById('dynamic-favicon');
-                if (favicon && this.vmName) {
-                    favicon.href = `/favicon.ico?vm=${encodeURIComponent(this.vmName)}&v=${Date.now()}`;
+                if (this.vmName) {
+                    document.getElementById('dynamic-favicon').href =
+                        `/favicon.ico?vm=${encodeURIComponent(this.vmName)}&v=${Date.now()}`;
                 }
+
+                this.btn.addEventListener('click', () => this.launchVM());
+                window.addEventListener('pagehide', () => this.disconnect());
+
+                this.checkStatus();
             },
 
-            showOffline() {
-                document.getElementById('offline-ui').style.display = 'flex';
-                const btn = document.getElementById('pve_start_button');
-                btn.classList.remove('disabled');
-                document.getElementById('startBtnText').innerText = 'Запустить';
-            },
-
-            showOnline() {
-                document.getElementById('offline-ui').style.display = 'none';
+            setOfflineState(isLaunching = false) {
+                this.ui.classList.add('visible');
+                this.btn.disabled = isLaunching;
+                this.btnText.textContent = isLaunching ? 'Запуск...' : 'Запустить';
             },
 
             async isRunning() {
                 try {
-                    const res = await fetch(`/status?vm=${encodeURIComponent(this.vmName)}`, {
-                        cache: 'no-store'
-                    });
+                    const res = await fetch(`/status?vm=${encodeURIComponent(this.vmName)}`, { cache: 'no-store' });
                     return res.ok && (await res.text()).trim() === 'RUNNING';
                 } catch {
                     return false;
                 }
             },
 
-            async checkInitialStatus() {
+            async checkStatus(intervalMs = 2500) {
+                this.stopPolling();
                 if (await this.isRunning()) {
                     this.connectVNC();
                 } else {
-                    this.showOffline();
-                    this.startPolling(2500);
+                    this.ui.classList.add('visible');
+                    this.pollTimer = setTimeout(() => this.checkStatus(intervalMs), intervalMs);
                 }
-            },
-
-            startPolling(intervalMs) {
-                if (this.pollTimer) return;
-                this.pollTimer = setInterval(async () => {
-                    if (await this.isRunning()) {
-                        this.stopPolling();
-                        this.connectVNC();
-                    }
-                }, intervalMs);
             },
 
             stopPolling() {
-                if (this.pollTimer) {
-                    clearInterval(this.pollTimer);
-                    this.pollTimer = null;
-                }
+                clearTimeout(this.pollTimer);
+                this.pollTimer = null;
+            },
+
+            disconnect() {
+                this.stopPolling();
+                try { this.rfb?.disconnect(); } catch {}
+                this.rfb = null;
             },
 
             connectVNC() {
                 if (this.isConnecting) return;
                 this.isConnecting = true;
-
-                if (this.rfb) {
-                    try { this.rfb.disconnect(); } catch {}
-                    this.rfb = null;
-                }
+                this.disconnect();
 
                 const container = document.getElementById('noVNC_container');
                 container.textContent = '';
 
-                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                const wsUrl = `${protocol}//${window.location.hostname}:${this.proxyPort}/ws?token=${encodeURIComponent(this.vmName)}`;
+                const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${proto}//${location.hostname}:${this.proxyPort}/ws?token=${encodeURIComponent(this.vmName)}`;
 
                 const client = new RFB(container, wsUrl, {
                     wsProtocols: ['binary'],
                     focusOnClick: true,
                     pingInterval: 10
                 });
-
                 client.scaleViewport = true;
 
                 client.addEventListener('connect', () => {
                     this.isConnecting = false;
                     this.rfb = client;
-                    this.stopPolling();
-                    this.showOnline();
-                    setTimeout(() => this.rfb && this.rfb.focus(), 150);
+                    this.ui.classList.remove('visible');
+                    setTimeout(() => this.rfb?.focus(), 150);
                 });
 
                 client.addEventListener('disconnect', () => {
                     this.isConnecting = false;
                     this.rfb = null;
-                    this.showOffline();
-                    this.startPolling(1500);
+                    this.setOfflineState(false);
+                    this.checkStatus(1500);
                 });
             },
 
-            launchVM() {
-                const btn = document.getElementById('pve_start_button');
-                if (btn.classList.contains('disabled')) return;
-
-                btn.classList.add('disabled');
-                document.getElementById('startBtnText').innerText = 'Запуск...';
+            async launchVM() {
+                if (this.btn.disabled) return;
+                this.setOfflineState(true);
                 this.stopPolling();
 
-                fetch(`/start?vm=${encodeURIComponent(this.vmName)}`, { cache: 'no-store' })
-                    .then(res => {
-                        if (res.ok) {
-                            this.startPolling(500);
-                        } else {
-                            this.showOffline();
-                            this.startPolling(2500);
-                        }
-                    })
-                    .catch(() => {
-                        this.showOffline();
-                        this.startPolling(2500);
-                    });
+                try {
+                    const res = await fetch(`/start?vm=${encodeURIComponent(this.vmName)}`, { cache: 'no-store' });
+                    this.checkStatus(res.ok ? 500 : 2500);
+                } catch {
+                    this.setOfflineState(false);
+                    this.checkStatus(2500);
+                }
             }
         };
 
-        window.VMConsole = VMConsole;
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', () => VMConsole.init());
-        } else {
-            VMConsole.init();
-        }
+        VMConsole.init();
     </script>
 </body>
 </html>
