@@ -5,12 +5,12 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/srv/qemu
-ExecStart=/srv/qemu/vnc2ws-webpanel.py
+ExecStart=/srv/qemu/webview-panel.py
 Restart=always
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=vnc2ws-webpanel
+SyslogIdentifier=webview-panel
 
 [Install]
 WantedBy=multi-user.target

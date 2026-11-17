@@ -1,5 +1,5 @@
-SERVER_NAME = vnc2ws-server
-PANEL_NAME = vnc2ws-webpanel
+SERVER_NAME = webview-server
+PANEL_NAME = webview-panel
 TARGET_PATH = /srv/qemu
 SYSTEMD_PATH = /etc/systemd/system
 PIXMAPS_PATH = /usr/share/pixmaps

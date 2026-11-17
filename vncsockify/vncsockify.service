@@ -1,17 +1,17 @@
 [Unit]
-Description=rfbsockify: Remote Framebuffer (VNC) to WebSocket Proxy
+Description=vncsockify: Remote Framebuffer (VNC) to WebSocket Proxy
 After=network.target
 
 [Service]
 Type=simple
 DynamicUser=yes
 WorkingDirectory=/srv/qemu
-ExecStart=/srv/qemu/rfbsockify.py 0.0.0.0:8080 --config-dir=/srv/qemu/config
+ExecStart=/srv/qemu/vncsockify.py 0.0.0.0:8080 --config-dir=/srv/qemu/config
 Restart=always
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=rfbsockify
+SyslogIdentifier=vncsockify
 
 [Install]
 WantedBy=multi-user.target

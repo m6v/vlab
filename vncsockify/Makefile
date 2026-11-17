@@ -1,4 +1,4 @@
-BRIDGE_NAME = rfbsockify
+BRIDGE_NAME = vncsockify
 SYSTEMD_PATH = /etc/systemd/system
 TARGET_PATH = /srv/qemu
 

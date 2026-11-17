@@ -1,8 +1,8 @@
 #!/bin/sh
 set -e
 
-SERVER_NAME=vnc2ws-server
-PANEL_NAME=vnc2ws-webpanel
+SERVER_NAME=webview-server
+PANEL_NAME=webview-panel
 
 case "$1" in
     configure)

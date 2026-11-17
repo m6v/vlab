@@ -220,7 +220,7 @@ class VMConsoleHandler(BaseHTTPRequestHandler):
 def main() -> None:
     default_webroot = Path(__file__).resolve().parent
 
-    parser = argparse.ArgumentParser(description="vnc2ws-server: VM Console Server")
+    parser = argparse.ArgumentParser(description="webview-server: VM Console Server")
     parser.add_argument("listen", nargs="?", default="0.0.0.0:8081")
     parser.add_argument("--proxy-port", type=int, default=8080)
     parser.add_argument("--config-dir", default="/srv/qemu/config")

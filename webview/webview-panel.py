@@ -140,7 +140,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="vnc2ws-webpanel: Instructor web panel")
+    parser = argparse.ArgumentParser(description="webview-panel: Instructor web panel")
     parser.add_argument("-c", "--config", default="/srv/qemu/webpanel.conf", help="Path to config file")
     args = parser.parse_args()
 

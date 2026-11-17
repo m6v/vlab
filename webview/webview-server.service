@@ -1,0 +1,17 @@
+[Unit]
+Description=webview-server: Web Console Server & API Manager
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/srv/qemu
+ExecStart=/srv/qemu/webview-server.py 0.0.0.0:8081 --proxy-port=8080 --config-dir=/srv/qemu/config --novncroot=/usr/share/novnc/
+KillMode=process
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=webview-server
+
+[Install]
+WantedBy=multi-user.target

@@ -1,4 +1,4 @@
-Package: vlab-rfbsockify
+Package: vlab-vncsockify
 Version: 2.1
 Section: utils
 Priority: optional
