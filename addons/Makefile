@@ -1,66 +1,29 @@
-PACKAGE_NAME := vlab-addons
-PROJECT_DIR := root
-ARCH := all
-DESTDIR ?= /
+BIN_PATH = /usr/local/bin
+SYSTEMD_PATH = /etc/systemd/system
 
-# Базовый префикс версии (например: 1.0., 2.1)
-BASE_VERSION := 2.2.
-
-# Вычисление итогового номера версии на основе количества коммитов
-COMMITS_COUNT := $(shell git rev-list --count HEAD 2>/dev/null || echo "1")
-VERSION := $(BASE_VERSION)$(COMMITS_COUNT)
-
-DEB_FILE := $(PACKAGE_NAME)_$(VERSION)_$(ARCH).deb
-
-.PHONY: all deb install skel2user clean help
+.PHONY: all deb
 
 all: deb
 
-# Сборка DEB-пакета
 deb:
-	@echo "Расчет размера установленных файлов..."
-	$(eval SIZE := $(shell du -sk --exclude='DEBIAN' $(PROJECT_DIR) | cut -f1))
-	@echo "Обновление версии ($(VERSION)) и размера ($(SIZE) КБ) в $(PROJECT_DIR)/DEBIAN/control..."
+	@echo "Подготовка структуры deb-пакета..."
+	$(eval BUILD_PATH := $(shell mktemp -d /tmp/deb-build.XXXXXX))
+	@cp -r DEBIAN $(BUILD_PATH)
 
-	@grep -vE '^(Version|Installed-Size):' $(PROJECT_DIR)/DEBIAN/control > $(PROJECT_DIR)/DEBIAN/control.tmp
-	@echo "Version: $(VERSION)" >> $(PROJECT_DIR)/DEBIAN/control.tmp
-	@echo "Installed-Size: $(SIZE)" >> $(PROJECT_DIR)/DEBIAN/control.tmp
-	@mv $(PROJECT_DIR)/DEBIAN/control.tmp $(PROJECT_DIR)/DEBIAN/control
+	@echo "Чтение шаблона deb-пакета..."
+	$(eval PKG_NAME := $(shell awk '/^Package:/ {print $$2}' DEBIAN/control))
+	$(eval BASE_VER  := $(shell awk '/^Version:/ {print $$2}' DEBIAN/control))
+	$(eval PKG_ARCH := $(shell awk '/^Architecture:/ {print $$2}' DEBIAN/control))
+	$(eval GIT_REV  := $(shell git rev-list --count HEAD 2>/dev/null || echo 0))
+	$(eval PKG_VER  := $(BASE_VER).$(GIT_REV))
 
-	@echo "Выставление прав на файлы структуры DEBIAN..."
-	@chmod 644 $(PROJECT_DIR)/DEBIAN/control
-	@if [ -f $(PROJECT_DIR)/DEBIAN/preinst ]; then chmod 755 $(PROJECT_DIR)/DEBIAN/preinst; fi
-	@if [ -f $(PROJECT_DIR)/DEBIAN/postinst ]; then chmod 755 $(PROJECT_DIR)/DEBIAN/postinst; fi
-	@if [ -f $(PROJECT_DIR)/DEBIAN/postrm ]; then chmod 755 $(PROJECT_DIR)/DEBIAN/postrm; fi
+	@mkdir -p $(BUILD_PATH)$(BIN_PATH)
+	@cp timemachine.py $(BUILD_PATH)$(BIN_PATH)
 
-	@echo "Сборка пакета $(DEB_FILE)..."
-	dpkg-deb -Zgzip --root-owner-group --build $(PROJECT_DIR) $(DEB_FILE)
-	@echo "Пакет успешно создан: $(DEB_FILE)"
+	@mkdir -p $(BUILD_PATH)$(SYSTEMD_PATH)
+	@cp vlab-httpd.service vlab-timemachine.service $(BUILD_PATH)$(SYSTEMD_PATH)
 
-# Прямая установка файлов в систему
-install:
-	@echo "Прямая установка файлов в $(DESTDIR)..."
-	sudo rsync -av --exclude='DEBIAN' --chown=root:root $(PROJECT_DIR)/ $(DESTDIR)/
-	@echo "Выполнение постинсталляционных действий..."
-	@if [ -f $(PROJECT_DIR)/DEBIAN/postinst ]; then \
-		sudo $(PROJECT_DIR)/DEBIAN/postinst configure; \
-	fi
-	@echo "Установка успешно завершена."
-
-# Копирование шаблонов из /etc/skel/ в домашний каталог текущего пользователя
-skel2user:
-	@echo "Настройка окружения для пользователя $(USER)..."
-	@echo "Копирование шаблонов из /etc/skel/ в $(HOME)..."
-	sudo rsync -av --ignore-existing --chown=$(USER):$(USER) /etc/skel/ $(HOME)/
-	@echo "Настройка каталога пользователя завершена."
-
-clean:
-	@echo "Удаление всех пакетов $(PACKAGE_NAME)..."
-	rm -f $(PACKAGE_NAME)_*.deb
-
-help:
-	@echo "Доступные команды:"
-	@echo "  make deb       - Собрать .deb пакет с версией из Git и автоподсчетом размера"
-	@echo "  make install   - Скопировать файлы напрямую в систему"
-	@echo "  make clean     - Удалить все собранные версии пакета $(PACKAGE_NAME)"
-	@echo "  make skel2user - Скопировать шаблоны из /etc/skel/ в домашний каталог текущего пользователя"
+	@echo "Сборка deb-пакета..."
+	@dpkg-deb --build --root-owner-group $(BUILD_PATH) $(PKG_NAME)_$(PKG_VER)_$(PKG_ARCH).deb
+	@rm -rf $(BUILD_PATH)
+	@echo "Пакет успешно собран: $(PKG_NAME)_$(PKG_VER)_$(PKG_ARCH).deb"

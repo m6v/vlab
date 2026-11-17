@@ -1,8 +1,8 @@
-Package: vlab-servers
+Package: vlab-addons
 Section: utils
 Priority: optional
 Architecture: amd64
-Maintainer: КБ "НАВИС" <support@navis.ru>, Sergey Maksimov <m6v@mail.ru>
+Maintainer: Sergey Maksimov <m6v@mail.ru>
 Depends: python3
 Description: Custom NTP-server with time shifting and HTTP-server
 Version: 2.2.277

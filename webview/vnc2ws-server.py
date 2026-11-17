@@ -31,7 +31,7 @@ logging.basicConfig(
 
 
 def parse_vnc_spec(spec: str) -> Tuple[str, int]:
-    """Преобразует QEMU '-vnc host:display[,opts]' в (ip, tcp_port)."""
+    """Преобразует аргумент '-vnc host:display[,opts]' конфига ВМ в кортеж (ip, tcp_port)."""
     target, _, _ = spec.strip().partition(",")
     host, sep, disp_str = target.rpartition(":")
     if not sep or not disp_str.isdigit():

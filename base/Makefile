@@ -27,7 +27,7 @@ deb:
 	@mkdir -p $(BUILD_PATH)$(BIN_PATH)
 	@cp vmctl snapshoter $(BUILD_PATH)$(BIN_PATH)
 
-	mkdir -p $(BUILD_PATH)/usr/lib/systemd/user
+	@mkdir -p $(BUILD_PATH)/usr/lib/systemd/user
 	@cp snapshoter.service $(BUILD_PATH)/usr/lib/systemd/user
 
 	@mkdir -p $(BUILD_PATH)/usr/share

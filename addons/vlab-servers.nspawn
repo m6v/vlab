@@ -1,6 +1,0 @@
-[Network]
-Bridge=virbr0
-
-[Files]
-Bind=/etc/faketime:/etc/faketime
-Bind=/srv/repo:/srv/repo
