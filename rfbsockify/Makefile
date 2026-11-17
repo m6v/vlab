@@ -1,4 +1,4 @@
-BRIDGE_NAME = vnc2ws-bridge
+BRIDGE_NAME = rfbsockify
 SYSTEMD_PATH = /etc/systemd/system
 TARGET_PATH = /srv/qemu
 

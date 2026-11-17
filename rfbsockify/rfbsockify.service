@@ -1,17 +1,17 @@
 [Unit]
-Description=vnc2ws-bridge: VNC to WebSocket Gateway Proxy
+Description=rfbsockify: Remote Framebuffer (VNC) to WebSocket Proxy
 After=network.target
 
 [Service]
 Type=simple
 DynamicUser=yes
 WorkingDirectory=/srv/qemu
-ExecStart=/srv/qemu/vnc2ws-bridge.py 0.0.0.0:8080 --config-dir=/srv/qemu/config
+ExecStart=/srv/qemu/rfbsockify.py 0.0.0.0:8080 --config-dir=/srv/qemu/config
 Restart=always
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=vnc2ws-bridge
+SyslogIdentifier=rfbsockify
 
 [Install]
 WantedBy=multi-user.target

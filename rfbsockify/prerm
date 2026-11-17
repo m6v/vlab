@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-BRIDGE_NAME=vnc2ws-bridge
+BRIDGE_NAME=rfbsockify
 
 case "$1" in
     purge|remove)

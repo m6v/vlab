@@ -7,7 +7,7 @@
 Комплекс состоит из двух независимых взаимодействующих серверных компонентов:
 
 1. **`vnc2ws-server.py`** — Управляющий веб-сервер и координатор сессий. Обеспечивает раздачу статических ресурсов интерфейса noVNC, обрабатывает REST API запросы состояний (`/status`, `/start`) и динамически генерирует уникальные фавиконки для целевых хостов из `/usr/share/pixmaps`.
-2. **`vnc2ws-bridge.py`** — Сетевой асинхронный транспортный шлюз. Обеспечивает бесшовную трансляцию сырых графических потоков VNC/RFB в современные веб-сокеты браузера. Защищен от засыпания вкладок благодаря встроенному циклу обмена пингами.
+2. **`rfbsockify.py`** — Сетевой асинхронный транспортный шлюз. Обеспечивает бесшовную трансляцию сырых графических потоков VNC/RFB в современные веб-сокеты браузера. Защищен от засыпания вкладок благодаря встроенному циклу обмена пингами.
 
 ## Требования и зависимости
 
@@ -48,7 +48,7 @@ srv-szi:127.0.0.1:5913
 ./vnc2ws-server.py 0.0.0.0:8081 --proxy-port=8080 --token-source=/srv/qemu/tokens.conf
 
 # 2. Запуск транспортного вебсокет-моста (Порт 8080)
-./vnc2ws-bridge.py 0.0.0.0:8080 --token-source=/srv/qemu/tokens.conf
+./rfbsockify.py 0.0.0.0:8080 --token-source=/srv/qemu/tokens.conf
 ```
 
 После старта интерфейс управления и отображения экранов доступен в браузере по адресу:
@@ -61,7 +61,7 @@ srv-szi:127.0.0.1:5913
 ```bash
 # Старт и активация автозапуска экосистемы vnc2ws
 sudo systemctl enable --now vnc2ws-server.service
-sudo systemctl enable --now vnc2ws-bridge.service
+sudo systemctl enable --now rfbsockify.service
 
 # Проверка статуса сетевых воркеров
 sudo systemctl status vnc2ws-*
@@ -361,7 +361,7 @@ def valid_listen_address(netloc: str) -> tuple:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="vnc2ws-bridge: WebSocket VNC proxy")
+    parser = argparse.ArgumentParser(description="rfbsockify: Remote Framebuffer (VNC) to WebSocket proxy")
     parser.add_argument("listen_target", nargs="?", type=valid_listen_address, default="0.0.0.0:8080")
     parser.add_argument("--token-source", default="/srv/qemu/tokens.conf", help="Путь к файлу токенов")
     args = parser.parse_args()

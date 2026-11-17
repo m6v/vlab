@@ -1,8 +1,8 @@
-Package: vlab-vnc2ws
-Version: 1.1
+Package: vlab-rfbsockify
+Version: 2.1
 Section: utils
 Priority: optional
 Architecture: amd64
 Depends: python3
 Maintainer: Maksimov Sergey <m6v@mail.ru>
-Description: Universal web console engine for virtual machines.
+Description: Remote Framebuffer (VNC) to WebSockets Proxy.

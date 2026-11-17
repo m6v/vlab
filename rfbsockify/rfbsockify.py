@@ -150,7 +150,7 @@ async def main(host: str, port: int, vnc_map: VncMap):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="vnc2ws-bridge: WebSocket VNC proxy")
+    parser = argparse.ArgumentParser(description="rfbsockify: Remote Framebuffer (VNC) to WebSocket")
     parser.add_argument("listen", nargs="?", default="0.0.0.0:8080")
     parser.add_argument("--config-dir", default="/srv/qemu/config")
     args = parser.parse_args()
