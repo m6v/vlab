@@ -17,14 +17,7 @@ deb:
 
 	@echo "Подготовка структуры deb-пакета..."
 	@mkdir -p $(BUILD_PATH)/DEBIAN
-	@cp control $(BUILD_PATH)/DEBIAN/control
-
-	@cp preinst $(BUILD_PATH)/DEBIAN/preinst
-	@chmod 755 $(BUILD_PATH)/DEBIAN/preinst
-	@cp postinst $(BUILD_PATH)/DEBIAN/postinst
-	@chmod 755 $(BUILD_PATH)/DEBIAN/postinst
-	@cp postrm $(BUILD_PATH)/DEBIAN/postrm
-	@chmod 755 $(BUILD_PATH)/DEBIAN/postrm
+	@cp control preinst postinst prerm postrm $(BUILD_PATH)/DEBIAN
 
 	@mkdir -p $(BUILD_PATH)/etc/skel
 	@cp -r Desktop $(BUILD_PATH)/etc/skel
@@ -33,7 +26,10 @@ deb:
 	@cp -r config $(BUILD_PATH)$(TARGET_PATH)
 
 	@mkdir -p $(BUILD_PATH)$(BIN_PATH)
-	@cp vmctl $(BUILD_PATH)$(BIN_PATH)
+	@cp vmctl snapshoter $(BUILD_PATH)$(BIN_PATH)
+
+	mkdir -p $(BUILD_PATH)/usr/lib/systemd/user
+	@cp snapshoter.service $(BUILD_PATH)/usr/lib/systemd/user
 
 	@mkdir -p $(BUILD_PATH)/usr/share
 	@cp -r pixmaps $(BUILD_PATH)/usr/share

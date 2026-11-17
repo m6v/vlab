@@ -59,6 +59,9 @@ case "$1" in
         echo "Создание образа USB-flash накопителя..."
         qemu-img create -f raw $SKEL_POOL/usb.img 1G
         mkfs.vfat -F 32  $SKEL_POOL/usb.img
+
+        echo "Включение пользовательской службы создания снапшотов оверлейных дисков..."
+        systemctl --global enable snapshoter.service >/dev/null
         ;;
 
     abort-upgrade|abort-remove|abort-deconfigure)

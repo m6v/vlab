@@ -1,0 +1,9 @@
+[Unit]
+Description=Daily QCOW2 snapshots on user login
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/snapshoter
+
+[Install]
+WantedBy=default.target
