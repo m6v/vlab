@@ -1,67 +1,51 @@
-PACKAGE_NAME := vlab-base
-PROJECT_DIR := root
-ARCH := all
-DESTDIR ?= /
+TARGET_PATH = /srv/qemu
+BIN_PATH = /usr/local/bin
+PIXMAPS_PATH = /usr/share/pixmaps
 
-# Базовый префикс версии (например: 1.0., 2.1)
-BASE_VERSION := 1.0.
-
-# Вычисление итогового номера версии на основе количества коммитов
-COMMITS_COUNT := $(shell git rev-list --count HEAD 2>/dev/null || echo "1")
-VERSION := $(BASE_VERSION)$(COMMITS_COUNT)
-
-DEB_FILE := $(PACKAGE_NAME)_$(VERSION)_$(ARCH).deb
-
-.PHONY: all deb install skel2user clean help
+.PHONY: all deb
 
 all: deb
 
-# Сборка DEB-пакета
 deb:
-	@echo "Расчет размера установленных файлов..."
-	$(eval SIZE := $(shell du -sk --exclude='DEBIAN' $(PROJECT_DIR) | cut -f1))
-	@echo "Обновление версии ($(VERSION)) и размера ($(SIZE) КБ) в $(PROJECT_DIR)/DEBIAN/control..."
+	@echo "Чтение шаблона deb-пакета..."
+	$(eval PKG_NAME := $(shell awk '/^Package:/ {print $$2}' control))
+	$(eval BASE_VER  := $(shell awk '/^Version:/ {print $$2}' control))
+	$(eval PKG_ARCH := $(shell awk '/^Architecture:/ {print $$2}' control))
+	$(eval GIT_REV  := $(shell git rev-list --count HEAD 2>/dev/null || echo 0))
+	$(eval PKG_VER  := $(BASE_VER).$(GIT_REV))
+	$(eval BUILD_PATH := $(shell mktemp -d /tmp/deb-build.XXXXXX))
 
-	@grep -vE '^(Version|Installed-Size):' $(PROJECT_DIR)/DEBIAN/control > $(PROJECT_DIR)/DEBIAN/control.tmp
-	@echo "Version: $(VERSION)" >> $(PROJECT_DIR)/DEBIAN/control.tmp
-	@echo "Installed-Size: $(SIZE)" >> $(PROJECT_DIR)/DEBIAN/control.tmp
-	@mv $(PROJECT_DIR)/DEBIAN/control.tmp $(PROJECT_DIR)/DEBIAN/control
+	@echo "Подготовка структуры deb-пакета..."
+	@mkdir -p $(BUILD_PATH)/DEBIAN
+	@cp control $(BUILD_PATH)/DEBIAN/control
 
-	@echo "Выставление прав на файлы структуры DEBIAN..."
-	@chmod 644 $(PROJECT_DIR)/DEBIAN/control
-	@if [ -f $(PROJECT_DIR)/DEBIAN/preinst ]; then chmod 755 $(PROJECT_DIR)/DEBIAN/preinst; fi
-	@if [ -f $(PROJECT_DIR)/DEBIAN/postinst ]; then chmod 755 $(PROJECT_DIR)/DEBIAN/postinst; fi
-	@if [ -f $(PROJECT_DIR)/DEBIAN/postrm ]; then chmod 755 $(PROJECT_DIR)/DEBIAN/postrm; fi
+	@cp preinst $(BUILD_PATH)/DEBIAN/preinst
+	@chmod 755 $(BUILD_PATH)/DEBIAN/preinst
+	@cp postinst $(BUILD_PATH)/DEBIAN/postinst
+	@chmod 755 $(BUILD_PATH)/DEBIAN/postinst
+	@cp postrm $(BUILD_PATH)/DEBIAN/postrm
+	@chmod 755 $(BUILD_PATH)/DEBIAN/postrm
 
-	@echo "Сборка пакета $(DEB_FILE)..."
-	@# Используем zstd для баланса скорости и сжатия (если ОС старая, можно заменить на -Zxz)
-	dpkg-deb -Zgzip --root-owner-group --build $(PROJECT_DIR) $(DEB_FILE)
-	@echo "Пакет успешно создан: $(DEB_FILE)"
+	@mkdir -p $(BUILD_PATH)/etc/skel
+	@cp -r Desktop $(BUILD_PATH)/etc/skel
 
-# Прямая установка файлов в систему
-install:
-	@echo "Прямая установка файлов в $(DESTDIR)..."
-	sudo rsync -av --exclude='DEBIAN' --chown=root:root $(PROJECT_DIR)/ $(DESTDIR)/
-	@echo "Выполнение постинсталляционных действий..."
-	@if [ -f $(PROJECT_DIR)/DEBIAN/postinst ]; then \
-		sudo $(PROJECT_DIR)/DEBIAN/postinst configure; \
-	fi
-	@echo "Установка успешно завершена."
+	@mkdir -p $(BUILD_PATH)$(TARGET_PATH)
+	@cp -r config $(BUILD_PATH)$(TARGET_PATH)
 
-# Копирование шаблонов из /etc/skel/ в домашний каталог текущего пользователя
-skel2user:
-	@echo "Настройка окружения для пользователя $(USER)..."
-	@echo "Копирование шаблонов из /etc/skel/ в $(HOME)..."
-	sudo rsync -av --ignore-existing --chown=$(USER):$(USER) /etc/skel/ $(HOME)/
-	@echo "Настройка каталога пользователя завершена."
+	@mkdir -p $(BUILD_PATH)$(BIN_PATH)
+	@cp vmctl $(BUILD_PATH)$(BIN_PATH)
+
+	@mkdir -p $(BUILD_PATH)/usr/share
+	@cp -r pixmaps $(BUILD_PATH)/usr/share
+
+	@mkdir -p $(BUILD_PATH)/usr/share/bash-completion/completions
+	@cp vmctl_completion $(BUILD_PATH)/usr/share/bash-completion/completions/vmctl
+
+	@echo "Сборка deb-пакета..."
+	@dpkg-deb --build --root-owner-group $(BUILD_PATH) $(PKG_NAME)_$(PKG_VER)_$(PKG_ARCH).deb
+	@rm -rf $(BUILD_PATH)
+	@echo "Пакет успешно собран: $(PKG_NAME)_$(PKG_VER)_$(PKG_ARCH).deb"
 
 clean:
-	@echo "Удаление всех пакетов $(PACKAGE_NAME)..."
-	rm -f $(PACKAGE_NAME)_*.deb
-
-help:
-	@echo "Доступные команды:"
-	@echo "  make deb       - Собрать .deb пакет с версией из Git и автоподсчетом размера"
-	@echo "  make install   - Скопировать файлы напрямую в систему"
-	@echo "  make clean     - Удалить все собранные версии пакета $(PACKAGE_NAME)"
-	@echo "  make skel2user - Скопировать шаблоны из /etc/skel/ в домашний каталог текущего пользователя"
+	rm -rf $(BUILD_PATH)
+	rm -f $(PKG_NAME)
