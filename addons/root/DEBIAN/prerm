@@ -16,8 +16,6 @@ case "$1" in
             systemctl stop vlab-httpd.service >/dev/null 2>&1 || true
         fi
         systemctl disable vlab-httpd.service >/dev/null 2>&1 || true
-
-        rmdir /srv/repo
     ;;
 
     upgrade|failed-upgrade)

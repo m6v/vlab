@@ -1,10 +1,10 @@
-PACKAGE_NAME := vlab-servers
+PACKAGE_NAME := vlab-addons
 PROJECT_DIR := root
 ARCH := all
 DESTDIR ?= /
 
 # Базовый префикс версии (например: 1.0., 2.1)
-BASE_VERSION := 2.1.
+BASE_VERSION := 2.2.
 
 # Вычисление итогового номера версии на основе количества коммитов
 COMMITS_COUNT := $(shell git rev-list --count HEAD 2>/dev/null || echo "1")
