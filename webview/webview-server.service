@@ -12,6 +12,7 @@ RestartSec=5
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=webview-server
+SuccessExitStatus=143
 
 [Install]
 WantedBy=multi-user.target

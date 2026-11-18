@@ -5,6 +5,7 @@ from functools import partial
 import logging
 from pathlib import Path
 import re
+import signal
 import socket
 import sys
 from typing import Dict, Optional, Tuple
@@ -137,6 +138,12 @@ async def main(host: str, port: int, vnc_map: VncMap):
         "Run in %s mode",
         "legacy (websockets < 13)" if LEGACY_WS else "modern (websockets >= 13)",
     )
+
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, stop_event.set)
+
     handler = partial(ws_handler, vnc_map=vnc_map)
     async with ws_serve(
         handler, host, port,
@@ -146,7 +153,9 @@ async def main(host: str, port: int, vnc_map: VncMap):
         max_size=None,
         reuse_address=True,
     ):
-        await asyncio.Event().wait()
+        await stop_event.wait()
+
+    logging.info("Bridge stopped cleanly")
 
 
 if __name__ == "__main__":
