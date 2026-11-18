@@ -1,4 +1,0 @@
-<network>
-  <name>extnet</name>
-  <bridge name='virbr1'/>
-</network>

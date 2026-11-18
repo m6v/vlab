@@ -1,8 +1,0 @@
-Package: vlab-ansible
-Version: 1.2
-Section: utils
-Priority: optional
-Architecture: amd64
-Maintainer: КБ "НАВИС" <support@navis.ru>, Sergey Maksimov <m6v@mail.ru>
-Depends: ansible, whiptail, sshpass, rsync, genisoimage
-Description: Ansible orchestration for virtual laboratory (vlab)

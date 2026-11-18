@@ -1,6 +1,0 @@
----
-# NB! Имя в строке должно совпадать с тем, что написано в notify
-- name: Перезапуск nftables
-  service:
-    name: nftables
-    state: restarted

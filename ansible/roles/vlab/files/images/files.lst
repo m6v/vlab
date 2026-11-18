@@ -1,8 +1,0 @@
-В этом каталоге должны быть файлы, которые при установке копируются в /var/lib/libvirt/images на целевых машинах (образ установочного диска Астры в vlab/ansible/roles/common/files):
--rw------- 1 libvirt-qemu libvirt-qemu      196864 авг 24 09:25 arm-abi.qcow2
--rw------- 1 libvirt-qemu libvirt-qemu 34365243392 мар  7  2026 arm-ipc.qcow2
--rw------- 1 libvirt-qemu libvirt-qemu 34365243392 авг 10 23:46 arm-o.qcow2
--rw------- 1 libvirt-qemu libvirt-qemu  2148073472 июн 16 11:40 ipc-master.qcow2
--rw------- 1 libvirt-qemu libvirt-qemu  2148073472 июн 16 11:53 ipc-slave.qcow2
--rw------- 1 libvirt-qemu libvirt-qemu  2162819072 июн 15 16:12 rubicon.qcow2
--rw------- 1 libvirt-qemu libvirt-qemu      197120 авг 24 09:25 srv-szi.qcow2
