@@ -1,0 +1,7 @@
+Package: vlab
+Maintainer: Sergey Maksimov <m6v@mail.ru>
+Architecture: all
+Depends: vlab-base, vlab-vncsockify, vlab-webview, vlab-addons
+Description: Метапакет для установки специального программного обеспечения УТК-СЗИ
+Version: 2.1.274
+Installed-Size: 404
