@@ -122,6 +122,8 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             self.send_safe_file(self.server.webroot, "panel.html", "text/html; charset=utf-8")
         elif route == "/api/nodes":
             self.handle_nodes()
+        elif route == "/virt-manager.png":
+            self.send_safe_file(Path("/usr/share/pixmaps"), "virt-manager.png", "image/png")
         else:
             self.send_safe_file(self.server.webroot, route)
 
@@ -132,8 +134,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             return
 
         worker = partial(fetch_node_status, timeout=self.server.timeout)
-        with ThreadPoolExecutor(max_workers=min(32, len(nodes))) as pool:
-            result = list(pool.map(worker, nodes))
+        result = list(self.server.pool.map(worker, nodes))
 
         body = json.dumps(result).encode("utf-8")
         self.send_payload(HTTPStatus.OK, body, "application/json; charset=utf-8", no_cache=True)
@@ -153,7 +154,9 @@ def main() -> None:
     try:
         host, port_str = listen.rpartition(":")[::2]
         addr = (host or "0.0.0.0", int(port_str))
+        ThreadingHTTPServer.allow_reuse_address = True
         server = ThreadingHTTPServer(addr, WebPanelHandler)
+        server.daemon_threads = True
     except Exception as e:
         logging.critical("Failed to start webpanel on '%s': %s", listen, e)
         sys.exit(1)
@@ -161,12 +164,15 @@ def main() -> None:
     server.nodes = nodes
     server.webroot = webroot
     server.timeout = timeout
+    server.pool = ThreadPoolExecutor(max_workers=min(32, max(1, len(nodes))))
 
-    logging.info("Instructor WebPanel started on http://%s:%s", addr, addr)
+    logging.info("Instructor WebPanel started on http://%s:%s", addr[0], addr[1])
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         logging.info("Shutting down server...")
+    finally:
+        server.pool.shutdown(wait=False)
         server.server_close()
 
 

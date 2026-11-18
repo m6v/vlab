@@ -93,12 +93,15 @@ class VMConsoleHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args) -> None:
         logging.debug(format, *args)
 
+    def end_headers(self) -> None:
+        self.send_header("Access-Control-Allow-Origin", "*")
+        super().end_headers()
+
     def send_payload(self, status: HTTPStatus, body: bytes, content_type: str, no_cache: bool = False) -> None:
         try:
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Access-Control-Allow-Origin", "*")
             if no_cache:
                 self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
             self.end_headers()
@@ -234,6 +237,7 @@ def main() -> None:
         host, port_str = args.listen.rpartition(":")[::2]
         addr = (host or "0.0.0.0", int(port_str))
         server = ThreadingHTTPServer(addr, VMConsoleHandler)
+        server.daemon_threads = True
     except Exception as e:
         logging.critical("Failed to start server on '%s': %s", args.listen, e)
         sys.exit(1)

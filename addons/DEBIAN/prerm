@@ -5,11 +5,11 @@ case "$1" in
     remove|deconfigure)
         echo "Остановка и отключение служб виртуального стенда перед удалением..."
 
-        # Останавливаем и отключаем vlab-timemachine
-        if systemctl is-active --quiet vlab-timemachine.service; then
-            systemctl stop vlab-timemachine.service >/dev/null 2>&1 || true
+        # Останавливаем и отключаем timemachine
+        if systemctl is-active --quiet timemachine.service; then
+            systemctl stop timemachine.service >/dev/null 2>&1 || true
         fi
-        systemctl disable vlab-timemachine.service >/dev/null 2>&1 || true
+        systemctl disable timemachine.service >/dev/null 2>&1 || true
 
         # Останавливаем и отключаем vlab-httpd
         if systemctl is-active --quiet vlab-httpd.service; then

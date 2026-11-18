@@ -18,10 +18,10 @@ case "$1" in
         systemctl enable vlab-httpd.service >/dev/null 2>&1 || true
         systemctl restart vlab-httpd.service >/dev/null 2>&1 || true
 
-        # Активируем автозапуск и запускаем службу vlab-timemachine
-        echo "Активация vlab-timemachine..."
-        systemctl enable vlab-timemachine.service >/dev/null 2>&1 || true
-        systemctl restart vlab-timemachine.service >/dev/null 2>&1 || true
+        # Активируем автозапуск и запускаем службу timemachine
+        echo "Активация timemachine..."
+        systemctl enable timemachine.service >/dev/null 2>&1 || true
+        systemctl restart timemachine.service >/dev/null 2>&1 || true
 
         echo "Службы стенда успешно запущены!"
     ;;

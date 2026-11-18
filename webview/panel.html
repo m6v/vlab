@@ -83,6 +83,11 @@
             opacity: 1;
         }
 
+        .vm-item.online::before {
+            opacity: 1;
+            filter: grayscale(75%) brightness(35%) contrast(100%);
+        }
+
         details.node-offline > summary span { opacity: 0.5; }
 
         ul { list-style: none; padding: 0; margin: 0; }
@@ -195,6 +200,7 @@
             selectedVmKey: null,
             lastStructureHash: '',
             pollTimer: null,
+            isPolling: false,
             contextTarget: null,
 
             resolveHost: host => ['127.0.0.1', 'localhost'].includes(host) ? location.hostname : host,
@@ -257,7 +263,6 @@
                     });
                     if (!res.ok) throw new Error(await res.text());
 
-                    // Обновляем список статусов сразу и повторно через 700 мс (на случай задержки закрытия/открытия сокета QEMU)
                     clearTimeout(this.pollTimer);
                     await this.refreshNodes();
                     setTimeout(() => this.refreshNodes(), 700);
@@ -267,13 +272,16 @@
             },
 
             async refreshNodes() {
+                if (this.isPolling) return;
+                this.isPolling = true;
                 clearTimeout(this.pollTimer);
+
                 try {
                     const res = await fetch('/api/nodes', { cache: 'no-store' });
                     if (!res.ok) return;
                     const nodes = await res.json();
 
-                    const sig = nodes.map(n => `${n.host}:${n.online}:${n.vms.map(v => v.name).join(',')}`).join('|');
+                    const sig = nodes.map(n => `${n.host}:${n.vms.map(v => v.name).join(',')}`).join('|');
                     if (sig !== this.lastStructureHash) {
                         this.lastStructureHash = sig;
                         this.buildTree(nodes);
@@ -282,32 +290,30 @@
                 } catch (e) {
                     console.error("Ошибка опроса рабочих мест:", e);
                 } finally {
+                    this.isPolling = false;
                     this.pollTimer = setTimeout(() => this.refreshNodes(), 3000);
                 }
             },
+
             buildTree(nodes) {
                 const tree = document.getElementById('pve-tree');
-                const userState = Object.fromEntries(
-                    [...tree.querySelectorAll('details[data-toggled]')].map(el => [el.dataset.host, el.open])
+                const currentOpenState = Object.fromEntries(
+                    [...tree.querySelectorAll('details')].map(el => [el.dataset.host, el.open])
                 );
 
                 tree.replaceChildren(...nodes.map(node => {
                     const details = document.createElement('details');
                     details.dataset.host = node.host;
-                    if (!node.online) details.className = 'node-offline';
-                    if (node.host in userState) {
-                        details.dataset.toggled = '1';
-                        details.open = userState[node.host];
-                    } else {
-                        details.open = true;
-                    }
+
+                    details.open = (node.host in currentOpenState)
+                        ? currentOpenState[node.host]
+                        : node.vms.some(v => v.running);
 
                     const summary = document.createElement('summary');
                     summary.title = `${node.host}:${node.consolePort}`;
                     const label = document.createElement('span');
-                    label.textContent = node.online ? node.label : `${node.label}`;
+                    label.textContent = node.label;
                     summary.append(label);
-                    summary.addEventListener('click', () => details.dataset.toggled = '1');
 
                     const ul = document.createElement('ul');
                     ul.append(...node.vms.map(vm => {
@@ -338,11 +344,19 @@
                     details.append(summary, ul);
                     return details;
                 }));
+                if (this.selectedVmKey && !tree.querySelector(`[data-key="${CSS.escape(this.selectedVmKey)}"]`)) {
+                    this.selectedVmKey = null;
+                    document.getElementById('content').classList.remove('has-vm');
+                    document.getElementById('vnc-frame').removeAttribute('src');
+                }
             },
 
             updateStatuses(nodes) {
                 const runningSet = new Set(
                     nodes.flatMap(n => n.vms.filter(v => v.running).map(v => `${n.host}-${v.name}`))
+                );
+                const onlineHosts = new Set(
+                    nodes.filter(n => n.online).map(n => n.host)
                 );
 
                 document.querySelectorAll('.vm-item').forEach(el => {
@@ -352,13 +366,7 @@
                 document.querySelectorAll('details').forEach(details => {
                     const hasOnline = Boolean(details.querySelector('.online'));
                     details.classList.toggle('node-active', hasOnline);
-
-                    if (hasOnline && !details.dataset.toggled) {
-                        details.open = true;
-                    } else if (!hasOnline) {
-                        delete details.dataset.toggled;
-                        details.open = false;
-                    }
+                    details.classList.toggle('node-offline', !onlineHosts.has(details.dataset.host));
                 });
             }
         };
