@@ -1,0 +1,12 @@
+# Установка novnc
+Распаковать архив и создать симлинк
+sudo tar -xzf noVNC-*.tar.gz -C /usr/share
+sudo ln -s /usr/share/noVNC-1.7.0 /usr/share/novnc
+
+# Установка websockets
+Определить пути к каталогам c библиотеками
+python3 -c "import site; print(site.getsitepackages())"
+['/usr/local/lib/python3.7/dist-packages', '/usr/lib/python3/dist-packages', '/usr/lib/python3.7/dist-packages']
+
+Распаковать архив с websockets по однуму из путей, например
+sudo tar -xzf websockets-*.tar.gz -C /usr/local/lib/python3.7/dist-packages/ --strip-components=2 --wildcards "*/src/websockets"
