@@ -1,7 +1,7 @@
 Package: vlab-base
 Maintainer: Sergey Maksimov <m6v@mail.ru>
 Architecture: all
-Depends: qemu-system-x86, qemu-utils, network-manager, virt-viewer, socat
+Depends: qemu-system-x86, qemu-utils, ovmf, network-manager, virt-viewer, socat
 Description: Установщик среды виртуализации УТК-СЗИ
 Version: 2.1
 Installed-Size: 404
