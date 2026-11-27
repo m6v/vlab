@@ -11,11 +11,11 @@ case "$1" in
         fi
         systemctl disable timemachine.service >/dev/null 2>&1 || true
 
-        # Останавливаем и отключаем vlab-httpd
-        if systemctl is-active --quiet vlab-httpd.service; then
-            systemctl stop vlab-httpd.service >/dev/null 2>&1 || true
+        # Останавливаем и отключаем distrohub
+        if systemctl is-active --quiet distrohub.service; then
+            systemctl stop distrohub.service >/dev/null 2>&1 || true
         fi
-        systemctl disable vlab-httpd.service >/dev/null 2>&1 || true
+        systemctl disable distrohub.service >/dev/null 2>&1 || true
     ;;
 
     upgrade|failed-upgrade)

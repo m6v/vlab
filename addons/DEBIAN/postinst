@@ -13,10 +13,10 @@ case "$1" in
             systemctl daemon-reload >/dev/null 2>&1 || true
         fi
 
-        # Активируем автозапуск и запускаем службу vlab-httpd
-        echo "Активация vlab-httpd..."
-        systemctl enable vlab-httpd.service >/dev/null 2>&1 || true
-        systemctl restart vlab-httpd.service >/dev/null 2>&1 || true
+        # Активируем автозапуск и запускаем службу distrohub
+        echo "Активация distrohub..."
+        systemctl enable distrohub.service >/dev/null 2>&1 || true
+        systemctl restart distrohub.service >/dev/null 2>&1 || true
 
         # Активируем автозапуск и запускаем службу timemachine
         echo "Активация timemachine..."

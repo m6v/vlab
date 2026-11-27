@@ -21,7 +21,7 @@ deb:
 	@cp timemachine.py $(BUILD_PATH)$(BIN_PATH)
 
 	@mkdir -p $(BUILD_PATH)$(SYSTEMD_PATH)
-	@cp vlab-httpd.service timemachine.service $(BUILD_PATH)$(SYSTEMD_PATH)
+	@cp distrohub.service timemachine.service $(BUILD_PATH)$(SYSTEMD_PATH)
 
 	@echo "Сборка deb-пакета..."
 	@dpkg-deb --build --root-owner-group $(BUILD_PATH) $(PKG_NAME)_$(PKG_VER)_$(PKG_ARCH).deb

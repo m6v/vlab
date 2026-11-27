@@ -24,8 +24,14 @@ fi
 
 ACTION="$1"
 
+# Вывод общей справки или справки по команде, указанной в $2
+if [ "$ACTION" = "help" ]; then
+    printf "help ${2:-}\nquit\n" | qemu-system-x86_64 -display none -monitor stdio | grep -vE "^(QEMU |\(qemu\))"
+    exit 0
+fi
+
 # Вывод имен запущенных виртуальных машин
-if [ "$ACTION" = "list" ]; then
+if [ "$ACTION" = "list" ] || [ "$ACTION" = "ps" ]; then
     # Поиск PID процессов и объединение их через запятую для утилиты ps
     PIDS=$(pgrep -f "qemu-system-x86_64.*-name" | paste -sd ',' -)
     if [ -n "$PIDS" ]; then
@@ -39,7 +45,7 @@ fi
 # Проверка наличия по крайней мере еще одного аргумента (имени виртуальной машины)
 if [ -z "$2" ]; then
     echo "Ошибка: Не указано имя виртуальной машины." | tee /dev/stderr
-    echo "Использование: $SELF_NAME <list|info|run|stop|resume|reset|powerdown|quit|kill> <имя_машины> или $SELF_NAME list"
+    echo "Использование: $SELF_NAME <info|run|stop|resume|reset|powerdown|quit|kill> <имя_машины>[@IP-адрес] | $SELF_NAME list | $SELF_NAME help [command]"
     echo "Синтаксис команд управления см. на https://www.qemu.org/docs/master/system/monitor.html"
     exit 1
 fi
@@ -132,7 +138,7 @@ case "$ACTION" in
             exit 1
         fi
         DISK_ID=id$(echo -n "$DISK_PATH" | md5sum | cut -c 1-8)
-        # Регистрация USB-носителя на хосте 
+        # Регистрация USB-носителя на хосте
         echo "drive_add 0 if=none,id=${DISK_ID},file=${DISK_PATH},format=raw" | socat - "$VM_SOCK"  # >/dev/null
         sleep 1
         # Подключение USB-носителя к шине usb3.0

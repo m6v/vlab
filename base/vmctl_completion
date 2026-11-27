@@ -5,7 +5,7 @@ _vmctl_completion() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     # Список всех поддерживаемых команд
-    opts="start stop kill list pause resume info"
+    opts="run start stop kill list pause resume quit info"
 
     # Если дополняем первое слово (саму команду)
     if [[ ${COMP_CWORD} -eq 1 ]]; then
@@ -16,7 +16,7 @@ _vmctl_completion() {
     # Если второе слово — дополняем именами машин в зависимости от контекста
     if [[ ${COMP_CWORD} -eq 2 ]]; then
         case "${prev}" in
-            start|info)
+            run|info)
                 # Для start и info показываем ВСЕ доступные конфигурации из файлов *.conf
                 local config_dir="/srv/qemu/config"
                 if [ -d "$config_dir" ]; then
@@ -25,7 +25,7 @@ _vmctl_completion() {
                 fi
                 return 0
                 ;;
-            stop|kill|pause)
+            stop|quit|kill|pause)
                 # Для stop, kill и pause показываем ТОЛЬКО запущенные машины
                 local pids=$(pgrep -f "qemu-system-x86_64.*-name" | paste -sd ',' -)
                 if [ -n "$pids" ]; then
@@ -34,7 +34,7 @@ _vmctl_completion() {
                 fi
                 return 0
                 ;;
-            resume)
+            start|resume)
                 # Для resume показываем ТОЛЬКО те машины, которые сейчас на паузе (status: paused)
                 local pids=$(pgrep -f "qemu-system-x86_64.*-name" | paste -sd ',' -)
                 if [ -n "$pids" ]; then
