@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=Панель управления QEMU/KVM
+GenericName=Панель управления QEMU/KVM
+Type=Link
+NoDisplay=false
+Hidden=false
+URL=http://127.0.0.1:8000
